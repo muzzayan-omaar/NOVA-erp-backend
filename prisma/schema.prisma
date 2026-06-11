@@ -1,0 +1,169 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  CASHIER
+}
+
+enum PaymentMethod {
+  CASH
+  MOBILE_MONEY
+  CARD
+  CREDIT
+  MIXED
+}
+
+enum SaleStatus {
+  COMPLETED
+  REFUNDED
+  VOID
+}
+
+enum InventoryMovementType {
+  IN
+  OUT
+  SALE
+  ADJUSTMENT
+}
+
+model Store {
+  id          String   @id @default(uuid())
+  name        String
+  location    String?
+  phone       String?
+  users       User[]
+  products    Product[]
+  sales       Sale[]
+  customers   Customer[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("Store")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  name          String
+  email         String   @unique
+  passwordHash  String
+  role          Role     @default(CASHIER)
+  storeId       String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  store         Store    @relation(fields: [storeId], references: [id])
+  sales         Sale[]
+  inventoryMoves InventoryMovement[]
+  auditLogs     AuditLog[]
+
+  @@map("User")
+}
+
+// Add @@map to all other models similarly...
+
+model Product {
+  id            String   @id @default(uuid())
+  name          String
+  barcode       String?  @unique
+  sku           String?  @unique
+  buyingPrice   Float
+  sellingPrice  Float
+  stockQuantity Float    @default(0)
+  unitType      String   @default("pcs")
+  storeId       String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  store         Store    @relation(fields: [storeId], references: [id])
+  saleItems     SaleItem[]
+  inventoryMoves InventoryMovement[]
+
+  @@map("Product")
+}
+
+model Sale {
+  id            String         @id @default(uuid())
+  storeId       String
+  userId        String
+  totalAmount   Float
+  discount      Float          @default(0)
+  paymentMethod PaymentMethod
+  status        SaleStatus     @default(COMPLETED)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  store         Store          @relation(fields: [storeId], references: [id])
+  user          User           @relation(fields: [userId], references: [id])
+  saleItems     SaleItem[]
+
+  @@map("Sale")
+}
+
+// ... (continue for SaleItem, InventoryMovement, Customer, AuditLog)
+
+model SaleItem {
+  id          String   @id @default(uuid())
+  saleId      String
+  productId   String
+  quantity    Float
+  unitPrice   Float
+  subtotal    Float
+  createdAt   DateTime @default(now())
+
+  sale        Sale     @relation(fields: [saleId], references: [id])
+  product     Product  @relation(fields: [productId], references: [id])
+
+  @@map("SaleItem")
+}
+
+model InventoryMovement {
+  id          String                 @id @default(uuid())
+  productId   String
+  type        InventoryMovementType
+  quantity    Float
+  reason      String?
+  createdById String
+  createdAt   DateTime               @default(now())
+
+  product     Product                @relation(fields: [productId], references: [id])
+  createdBy   User                   @relation(fields: [createdById], references: [id])
+
+  @@map("InventoryMovement")
+}
+
+model Customer {
+  id          String   @id @default(uuid())
+  name        String
+  phone       String?
+  totalCredit Float    @default(0)
+  storeId     String
+  createdAt   DateTime @default(now())
+
+  store       Store    @relation(fields: [storeId], references: [id])
+
+  @@map("Customer")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String
+  action      String
+  entityType  String
+  entityId    String
+  metadata    Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@map("AuditLog")
+}
