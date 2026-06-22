@@ -12,7 +12,6 @@ export const createSale = async (req, res) => {
 
     const productIds = items.map(i => i.productId);
 
-    // Fetch products with store isolation
     const products = await prisma.product.findMany({
       where: {
         id: { in: productIds },
@@ -25,23 +24,22 @@ export const createSale = async (req, res) => {
     // Validate stock
     for (let item of items) {
       const product = productMap.get(item.productId);
-      if (!product) {
-        return res.status(404).json({ message: `Product not found` });
-      }
+      if (!product) return res.status(404).json({ message: `Product not found` });
       if (product.stockQuantity < item.quantity) {
-        return res.status(400).json({ 
-          message: `Insufficient stock for ${product.name}` 
-        });
+        return res.status(400).json({ message: `Insufficient stock for ${product.name}` });
       }
     }
 
-    // Calculate total
-    let totalAmount = 0;
+    // Calculate amounts with VAT
+    let subtotal = 0;
     for (let item of items) {
       const product = productMap.get(item.productId);
-      totalAmount += product.sellingPrice * item.quantity;
+      subtotal += product.sellingPrice * item.quantity;
     }
-    totalAmount = Math.max(0, totalAmount - discount);
+
+    const totalAmount = subtotal - discount;
+    const vatAmount = totalAmount * (18 / 118);
+    const netAmount = totalAmount - vatAmount;
 
     // Atomic Transaction
     const sale = await prisma.$transaction(async (tx) => {
@@ -52,6 +50,7 @@ export const createSale = async (req, res) => {
           totalAmount,
           discount,
           paymentMethod,
+          // We can add fiscal fields later
         },
       });
 
@@ -60,14 +59,14 @@ export const createSale = async (req, res) => {
 
       for (let item of items) {
         const product = productMap.get(item.productId);
-        const subtotal = product.sellingPrice * item.quantity;
+        const itemSubtotal = product.sellingPrice * item.quantity;
 
         saleItemsData.push({
           saleId: newSale.id,
           productId: product.id,
           quantity: item.quantity,
           unitPrice: product.sellingPrice,
-          subtotal,
+          subtotal: itemSubtotal,
         });
 
         movementData.push({
@@ -77,7 +76,6 @@ export const createSale = async (req, res) => {
           createdById: req.user.id,
         });
 
-        // Update stock
         await tx.product.update({
           where: { id: product.id },
           data: { stockQuantity: { decrement: item.quantity } },
@@ -90,19 +88,21 @@ export const createSale = async (req, res) => {
       return newSale;
     });
 
-    // Audit Log
     await createAuditLog({
       userId: req.user.id,
       action: "SALE_CREATED",
       entityType: "sale",
       entityId: sale.id,
-      metadata: { totalAmount, itemCount: items.length },
+      metadata: { totalAmount, vatAmount, itemCount: items.length },
     });
 
-    // Real-time update
     io.emit("sale:completed", { storeId: req.user.storeId });
 
-    res.status(201).json(sale);
+    res.status(201).json({
+      ...sale,
+      vatAmount,
+      subtotal: netAmount,
+    });
   } catch (error) {
     console.error("Sale Error:", error);
     res.status(500).json({ message: "Failed to complete sale" });
@@ -125,5 +125,43 @@ export const getSales = async (req, res) => {
     res.json(sales);
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch sales" });
+  }
+};
+
+export const getTodayStats = async (req, res) => {
+  try {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const sales = await prisma.sale.findMany({
+      where: {
+        storeId: req.user.storeId,
+        createdAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      },
+      select: {
+        totalAmount: true,
+      },
+    });
+
+    const totalSales = sales.reduce(
+      (sum, sale) => sum + sale.totalAmount,
+      0
+    );
+
+    const transactions = sales.length;
+
+    res.json({
+      totalSales,
+      transactions,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Failed to fetch today stats" });
   }
 };
