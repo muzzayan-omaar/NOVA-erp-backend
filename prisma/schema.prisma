@@ -123,15 +123,16 @@ model InventoryMovement {
 }
 
 model Customer {
-  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name        String
   phone       String?
-  totalCredit Float?  @default(0)
-  storeId     String  @db.Uuid
+  email       String?
+  totalCredit Float    @default(0)
+  storeId     String   @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
 
-  createdAt DateTime? @default(now()) @db.Timestamptz(6)
-
-  store Store @relation(fields: [storeId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  store       Store    @relation(fields: [storeId], references: [id])
 
   @@map("Customer")
 }
@@ -152,6 +153,18 @@ model AuditLog {
   user User @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("AuditLog")
+}
+
+model Supplier {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name       String
+  phone      String?
+  email      String?
+  address    String?
+  totalOwed  Float    @default(0)
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("Supplier")
 }
 
 enum Role {
