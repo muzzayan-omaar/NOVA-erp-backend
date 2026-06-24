@@ -7,6 +7,153 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Store {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  location  String?
+  phone     String?
+  createdAt DateTime? @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime? @default(now()) @updatedAt @db.Timestamptz(6)
+
+  customers Customer[]
+  products  Product[]
+  sales     Sale[]
+  users     User[]
+
+  @@map("Store")
+}
+
+model User {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         Role?     @default(CASHIER)
+  storeId      String    @db.Uuid
+  isActive     Boolean?  @default(true)
+  createdAt    DateTime? @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime? @default(now()) @updatedAt @db.Timestamptz(6)
+
+  store          Store               @relation(fields: [storeId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  auditLogs      AuditLog[]
+  inventoryMoves InventoryMovement[]
+  sales          Sale[]
+
+  @@map("User")
+}
+
+model Product {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String
+  barcode       String?   @unique
+  sku           String?   @unique
+  buyingPrice   Float
+  sellingPrice  Float
+  stockQuantity Float?    @default(0)
+  unitType      String?   @default("pcs")
+  storeId       String    @db.Uuid
+  createdAt     DateTime? @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime? @default(now()) @updatedAt @db.Timestamptz(6)
+
+  store          Store               @relation(fields: [storeId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  inventoryMoves InventoryMovement[]
+  saleItems      SaleItem[]
+
+  @@map("Product")
+}
+
+model Sale {
+  id      String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  storeId String @db.Uuid
+  userId  String @db.Uuid
+
+  totalAmount Float
+  subtotal    Float?
+  vatAmount   Float?
+  discount    Float  @default(0)
+
+  paymentMethod PaymentMethod
+  status        SaleStatus    @default(COMPLETED)
+
+  fiscalReceiptId String?
+  qrCodeData      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  store     Store      @relation(fields: [storeId], references: [id])
+  user      User       @relation(fields: [userId], references: [id])
+  saleItems SaleItem[]
+
+  @@map("Sale")
+}
+
+model SaleItem {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  saleId    String @db.Uuid
+  productId String @db.Uuid
+
+  quantity  Float
+  unitPrice Float
+  subtotal  Float
+
+  createdAt DateTime? @default(now()) @db.Timestamptz(6)
+
+  sale    Sale    @relation(fields: [saleId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  product Product @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("SaleItem")
+}
+
+model InventoryMovement {
+  id          String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId   String @db.Uuid
+  createdById String @db.Uuid
+
+  type     InventoryMovementType
+  quantity Float
+  reason   String?
+
+  createdAt DateTime? @default(now()) @db.Timestamptz(6)
+
+  product   Product @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  createdBy User    @relation(fields: [createdById], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("InventoryMovement")
+}
+
+model Customer {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  phone       String?
+  totalCredit Float?  @default(0)
+  storeId     String  @db.Uuid
+
+  createdAt DateTime? @default(now()) @db.Timestamptz(6)
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("Customer")
+}
+
+model AuditLog {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @db.Uuid
+
+  action     String
+  entityType String
+  entityId   String
+
+  metadata  Json?
+  ipAddress String?
+
+  createdAt DateTime? @default(now()) @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("AuditLog")
+}
+
 enum Role {
   OWNER
   MANAGER
@@ -32,138 +179,4 @@ enum InventoryMovementType {
   OUT
   SALE
   ADJUSTMENT
-}
-
-model Store {
-  id          String   @id @default(uuid())
-  name        String
-  location    String?
-  phone       String?
-  users       User[]
-  products    Product[]
-  sales       Sale[]
-  customers   Customer[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@map("Store")
-}
-
-model User {
-  id            String   @id @default(uuid())
-  name          String
-  email         String   @unique
-  passwordHash  String
-  role          Role     @default(CASHIER)
-  storeId       String
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  store         Store    @relation(fields: [storeId], references: [id])
-  sales         Sale[]
-  inventoryMoves InventoryMovement[]
-  auditLogs     AuditLog[]
-
-  @@map("User")
-}
-
-// Add @@map to all other models similarly...
-
-model Product {
-  id            String   @id @default(uuid())
-  name          String
-  barcode       String?  @unique
-  sku           String?  @unique
-  buyingPrice   Float
-  sellingPrice  Float
-  stockQuantity Float    @default(0)
-  unitType      String   @default("pcs")
-  storeId       String
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  store         Store    @relation(fields: [storeId], references: [id])
-  saleItems     SaleItem[]
-  inventoryMoves InventoryMovement[]
-
-  @@map("Product")
-}
-
-model Sale {
-  id            String         @id @default(uuid())
-  storeId       String
-  userId        String
-  totalAmount   Float
-  discount      Float          @default(0)
-  paymentMethod PaymentMethod
-  status        SaleStatus     @default(COMPLETED)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-
-  store         Store          @relation(fields: [storeId], references: [id])
-  user          User           @relation(fields: [userId], references: [id])
-  saleItems     SaleItem[]
-
-  @@map("Sale")
-}
-
-// ... (continue for SaleItem, InventoryMovement, Customer, AuditLog)
-
-model SaleItem {
-  id          String   @id @default(uuid())
-  saleId      String
-  productId   String
-  quantity    Float
-  unitPrice   Float
-  subtotal    Float
-  createdAt   DateTime @default(now())
-
-  sale        Sale     @relation(fields: [saleId], references: [id])
-  product     Product  @relation(fields: [productId], references: [id])
-
-  @@map("SaleItem")
-}
-
-model InventoryMovement {
-  id          String                 @id @default(uuid())
-  productId   String
-  type        InventoryMovementType
-  quantity    Float
-  reason      String?
-  createdById String
-  createdAt   DateTime               @default(now())
-
-  product     Product                @relation(fields: [productId], references: [id])
-  createdBy   User                   @relation(fields: [createdById], references: [id])
-
-  @@map("InventoryMovement")
-}
-
-model Customer {
-  id          String   @id @default(uuid())
-  name        String
-  phone       String?
-  totalCredit Float    @default(0)
-  storeId     String
-  createdAt   DateTime @default(now())
-
-  store       Store    @relation(fields: [storeId], references: [id])
-
-  @@map("Customer")
-}
-
-model AuditLog {
-  id          String   @id @default(uuid())
-  userId      String
-  action      String
-  entityType  String
-  entityId    String
-  metadata    Json?
-  ipAddress   String?
-  createdAt   DateTime @default(now())
-
-  user        User     @relation(fields: [userId], references: [id])
-
-  @@map("AuditLog")
 }

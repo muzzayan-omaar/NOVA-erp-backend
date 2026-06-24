@@ -133,3 +133,37 @@ export const getAdvancedAnalytics = async (req, res) => {
     res.status(500).json({ message: "Failed to load advanced analytics" });
   }
 };
+
+export const getTaxReport = async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const storeId = req.user.storeId;
+
+    const sales = await prisma.sale.findMany({
+      where: { 
+        storeId,
+        createdAt: {
+          gte: from ? new Date(from) : undefined,
+          lte: to ? new Date(to) : undefined,
+        }
+      },
+      include: { saleItems: true }
+    });
+
+    const totalSubtotal = sales.reduce((sum, s) => sum + (s.subtotal || 0), 0);
+    const totalVat = sales.reduce((sum, s) => sum + (s.vatAmount || 0), 0);
+    const totalSales = sales.length;
+
+    res.json({
+      period: { from, to },
+      totalSales,
+      totalSubtotal,
+      totalVatCollected: totalVat,
+      totalRevenue: totalSubtotal + totalVat,
+      vatRate: "18%",
+      reportGeneratedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to generate tax report" });
+  }
+};

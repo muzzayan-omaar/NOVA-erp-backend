@@ -21,36 +21,33 @@ export const createSale = async (req, res) => {
 
     const productMap = new Map(products.map(p => [p.id, p]));
 
-    // Validate stock
+        // VAT Engine (18% Uganda Standard)
+    let subtotal = 0;
     for (let item of items) {
       const product = productMap.get(item.productId);
       if (!product) return res.status(404).json({ message: `Product not found` });
       if (product.stockQuantity < item.quantity) {
         return res.status(400).json({ message: `Insufficient stock for ${product.name}` });
       }
-    }
-
-    // Calculate amounts with VAT
-    let subtotal = 0;
-    for (let item of items) {
-      const product = productMap.get(item.productId);
       subtotal += product.sellingPrice * item.quantity;
     }
 
-    const totalAmount = subtotal - discount;
-    const vatAmount = totalAmount * (18 / 118);
-    const netAmount = totalAmount - vatAmount;
+    const vatRate = 0.18; // 18% VAT
+    const vatAmount = Math.round(subtotal * vatRate * 100) / 100; // Round to 2 decimals
+    const totalAmount = subtotal + vatAmount - discount;
 
-    // Atomic Transaction
     const sale = await prisma.$transaction(async (tx) => {
       const newSale = await tx.sale.create({
         data: {
           storeId: req.user.storeId,
           userId: req.user.id,
           totalAmount,
+          subtotal,
+          vatAmount,
           discount,
           paymentMethod,
-          // We can add fiscal fields later
+          fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
+          qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}&tin=YOUR_TIN_HERE`,
         },
       });
 
@@ -93,16 +90,12 @@ export const createSale = async (req, res) => {
       action: "SALE_CREATED",
       entityType: "sale",
       entityId: sale.id,
-      metadata: { totalAmount, vatAmount, itemCount: items.length },
+      metadata: { totalAmount, vatAmount, subtotal, itemCount: items.length },
     });
 
     io.emit("sale:completed", { storeId: req.user.storeId });
 
-    res.status(201).json({
-      ...sale,
-      vatAmount,
-      subtotal: netAmount,
-    });
+    res.status(201).json(sale);
   } catch (error) {
     console.error("Sale Error:", error);
     res.status(500).json({ message: "Failed to complete sale" });
