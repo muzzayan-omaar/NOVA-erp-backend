@@ -1,31 +1,58 @@
-import jwt from 'jsonwebtoken';
-import prisma from '../lib/prisma.js';
+import jwt from "jsonwebtoken";
+import prisma from "../lib/prisma.js";
 
 const protect = async (req, res, next) => {
   try {
-    let token;
+    console.log("🔐 AUTH HIT");
 
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-      token = req.headers.authorization.split(' ')[1];
+    const authHeader = req.headers.authorization;
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      
-      const user = await prisma.user.findUnique({
-        where: { id: decoded.id },
-        select: { id: true, name: true, email: true, role: true, storeId: true, isActive: true }
-      });
-
-      if (!user || !user.isActive) {
-        return res.status(401).json({ message: "Not authorized" });
-      }
-
-      req.user = user;
-      next();
-    } else {
-      return res.status(401).json({ message: "No token provided" });
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      console.log("❌ NO TOKEN");
+      return res.status(401).json({ message: "Unauthorized" });
     }
-  } catch (error) {
-    console.error(error);
+
+    const token = authHeader.split(" ")[1];
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    console.log("✅ TOKEN DECODED:", decoded);
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        companyId: true,
+        storeId: true,
+        activeStoreId: true,
+        isActive: true,
+      },
+    });
+
+    console.log("👤 USER FOUND:", user);
+
+    if (!user || !user.isActive) {
+      console.log("❌ USER INVALID");
+      return res.status(401).json({ message: "Account not found" });
+    }
+
+    const storeId = user.activeStoreId || user.storeId;
+
+    req.user = user;
+    req.context = {
+      companyId: user.companyId,
+      storeId,
+      userId: user.id,
+      role: user.role,
+    };
+
+    console.log("✅ CONTEXT SET:", req.context);
+
+    next();
+  } catch (err) {
+    console.error("❌ AUTH ERROR:", err.message);
     return res.status(401).json({ message: "Invalid token" });
   }
 };

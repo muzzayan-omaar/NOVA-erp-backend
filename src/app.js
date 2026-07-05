@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import rateLimit from 'express-rate-limit';
 
 import authRoutes from "./routes/authRoutes.js";
 import testRoutes from "./routes/testRoutes.js";
@@ -11,11 +12,21 @@ import paymentsRoutes from "./routes/paymentsRoutes.js";
 import customerRoutes from "./routes/customerRoutes.js";
 import supplierRoutes from "./routes/supplierRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
+import payrollRoutes from "./routes/payrollRoutes.js";
+import storeRoutes from "./routes/storeRoutes.js";
 
 const app = express();
 
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+})
+
 app.use(cors());
 app.use(express.json());
+app.use(limiter);
+
+
 
 app.get("/", (req, res) => {
   res.json({ message: "🚀 Nova ERP Backend Running Successfully" });
@@ -32,5 +43,7 @@ app.use("/api/payments", paymentsRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/suppliers", supplierRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/payroll", payrollRoutes);
+app.use("/api/stores", storeRoutes);
 
 export default app;

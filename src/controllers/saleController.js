@@ -39,7 +39,7 @@ export const createSale = async (req, res) => {
     const sale = await prisma.$transaction(async (tx) => {
       const newSale = await tx.sale.create({
         data: {
-          storeId: req.user.storeId,
+          storeId: req.user.activeStoreId || req.user.storeId,
           userId: req.user.id,
           totalAmount,
           subtotal,
@@ -105,7 +105,7 @@ export const createSale = async (req, res) => {
 export const getSales = async (req, res) => {
   try {
     const sales = await prisma.sale.findMany({
-      where: { storeId: req.user.storeId },
+      where: { storeId: req.user.activeStoreId || req.user.storeId },
       include: {
         user: { select: { name: true, role: true } },
         saleItems: {
