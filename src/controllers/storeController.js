@@ -13,7 +13,8 @@ export const createStore = async (req, res) => {
         location,
         phone,
         isHeadOffice: isHeadOffice || false,
-        companyId: req.context.companyId, 
+        isActive: true,
+        companyId: req.context.companyId,
       },
     });
 
@@ -33,15 +34,18 @@ export const getStores = async (req, res) => {
       where: {
         companyId: req.context.companyId,
       },
-      orderBy: {
-        createdAt: "asc",
-      },
+      orderBy:{
+        createdAt:"asc"
+      }
     });
 
     res.json(stores);
+
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Failed to fetch stores" });
+    res.status(500).json({
+      message:"Failed to fetch stores"
+    });
   }
 };
 
@@ -52,48 +56,31 @@ export const switchStore = async (req, res) => {
   try {
     const { storeId } = req.body;
 
-    if (!storeId) {
-      return res.status(400).json({
-        message: "storeId is required",
-      });
-    }
-
-    // VERIFY OWNERSHIP (VERY IMPORTANT)
     const store = await prisma.store.findFirst({
-      where: {
-        id: storeId,
-        companyId: req.context.companyId,
-      },
-    });
+  where:{
+    id:storeId,
+    companyId:req.context.companyId,
+    isActive:true
+  }
+});
 
-    if (!store) {
-      return res.status(404).json({
-        message: "Store not found or not accessible",
-      });
-    }
 
-    // UPDATE USER ACTIVE STORE
+if(!store){
+ return res.status(404).json({
+   message:"Store not available"
+ });
+}
+
+    // Update user's active store
     const updatedUser = await prisma.user.update({
-      where: {
-        id: req.context.userId,
-      },
-      data: {
-        activeStoreId: store.id,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        companyId: true,
-        storeId: true,
-        activeStoreId: true,
-      },
+      where: { id: req.user.id },
+      data: { activeStoreId: storeId },
+      include: { activeStore: true }
     });
 
     res.json({
-      message: "Store switched successfully",
-      user: updatedUser,
+      message: "Store switched",
+      user: updatedUser
     });
   } catch (error) {
     console.error(error);
@@ -118,5 +105,54 @@ export const getCurrentStore = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: "Failed to get current store" });
+  }
+};
+
+export const toggleStoreStatus = async (req,res)=>{
+  try {
+
+    const { id } = req.params;
+    const { isActive } = req.body;
+
+
+    const store = await prisma.store.findFirst({
+      where:{
+        id,
+        companyId:req.context.companyId
+      }
+    });
+
+
+    if(!store){
+      return res.status(404).json({
+        message:"Store not found"
+      });
+    }
+
+
+    const updatedStore = await prisma.store.update({
+      where:{
+        id
+      },
+      data:{
+        isActive
+      }
+    });
+
+
+    res.json({
+      message:"Store status updated",
+      store:updatedStore
+    });
+
+
+  } catch(error){
+
+    console.error(error);
+
+    res.status(500).json({
+      message:"Failed to update store status"
+    });
+
   }
 };

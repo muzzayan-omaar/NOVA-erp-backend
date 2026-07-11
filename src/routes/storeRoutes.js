@@ -7,6 +7,7 @@ import {
   getStores,
   switchStore,
   getCurrentStore,
+  toggleStoreStatus,
 } from "../controllers/storeController.js";
 
 const router = express.Router();
@@ -14,7 +15,7 @@ const router = express.Router();
 router.post(
   "/",
   protect,
-  authorize("OWNER"),
+  authorize("OWNER", "MANAGER"),
   createStore
 );
 
@@ -24,16 +25,19 @@ router.get(
   getStores
 );
 
-router.post(
-  "/switch",
-  protect,
-  switchStore
-);
+router.post("/switch", protect, switchStore);
 
 router.get(
   "/current",
   protect,
   getCurrentStore
+);
+
+router.patch(
+  "/:id/status",
+  protect,
+  authorize("OWNER"),
+  toggleStoreStatus
 );
 
 export default router;

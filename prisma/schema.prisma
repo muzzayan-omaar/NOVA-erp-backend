@@ -45,7 +45,8 @@ model Store {
   location String?
   phone    String?
 
-  isHeadOffice Boolean @default(false) // NEW
+  isHeadOffice Boolean @default(false)
+  isActive Boolean @default(true)
 
   createdAt DateTime? @default(now()) @db.Timestamptz(6)
   updatedAt DateTime? @default(now()) @updatedAt @db.Timestamptz(6)
