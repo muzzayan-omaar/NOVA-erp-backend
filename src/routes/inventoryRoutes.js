@@ -1,9 +1,35 @@
 import express from "express";
-import { getMovements, adjustStock } from "../controllers/inventoryController.js";
+import protect from "../middleware/protect.js";
+
+import {
+  getMovements,
+  adjustStock,
+} from "../controllers/inventoryController.js";
+
 
 const router = express.Router();
 
-router.get("/movements", getMovements);
-router.post("/adjust", adjustStock);
+
+/**
+ * Inventory movements
+ * GET /api/inventory/movements
+ */
+router.get(
+  "/movements",
+  protect,
+  getMovements
+);
+
+
+/**
+ * Stock adjustment
+ * POST /api/inventory/adjust
+ */
+router.post(
+  "/adjust",
+  protect,
+  adjustStock
+);
+
 
 export default router;

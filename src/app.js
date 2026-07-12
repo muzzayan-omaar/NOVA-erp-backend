@@ -14,6 +14,7 @@ import supplierRoutes from "./routes/supplierRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import payrollRoutes from "./routes/payrollRoutes.js";
 import storeRoutes from "./routes/storeRoutes.js";
+import reportsRoutes from "./routes/reportsRoutes.js";
 
 const app = express();
 
@@ -45,5 +46,6 @@ app.use("/api/suppliers", supplierRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/payroll", payrollRoutes);
 app.use("/api/stores", storeRoutes);
+app.use("/api/reports", reportsRoutes);
 
 export default app;

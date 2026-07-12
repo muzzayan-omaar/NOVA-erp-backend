@@ -56,35 +56,58 @@ export const switchStore = async (req, res) => {
   try {
     const { storeId } = req.body;
 
+
+    if (!storeId) {
+      return res.status(400).json({
+        message: "Store ID required"
+      });
+    }
+
+
     const store = await prisma.store.findFirst({
-  where:{
-    id:storeId,
-    companyId:req.context.companyId,
-    isActive:true
-  }
-});
+      where: {
+        id: storeId,
+        companyId: req.context.companyId,
+        isActive: true
+      }
+    });
 
 
-if(!store){
- return res.status(404).json({
-   message:"Store not available"
- });
-}
+    if (!store) {
+      return res.status(404).json({
+        message: "Store not available"
+      });
+    }
+
 
     // Update user's active store
     const updatedUser = await prisma.user.update({
-      where: { id: req.user.id },
-      data: { activeStoreId: storeId },
-      include: { activeStore: true }
+      where: {
+        id: req.context.userId
+      },
+      data: {
+        activeStoreId: store.id
+      },
+      include: {
+        activeStore: true
+      }
     });
+
 
     res.json({
       message: "Store switched",
       user: updatedUser
     });
+
+
   } catch (error) {
+
     console.error(error);
-    res.status(500).json({ message: "Failed to switch store" });
+
+    res.status(500).json({
+      message: "Failed to switch store"
+    });
+
   }
 };
 
