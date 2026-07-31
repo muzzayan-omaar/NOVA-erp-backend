@@ -9,20 +9,22 @@ import {
   getCurrentStore,
   toggleStoreStatus,
 } from "../controllers/storeController.js";
+import checkPermission from "../middleware/checkPermission.js";
 
 const router = express.Router();
 
 router.post(
   "/",
   protect,
-  authorize("OWNER", "MANAGER"),
+  checkPermission("stores"),
   createStore
 );
 
 router.get(
-  "/",
-  protect,
-  getStores
+"/",
+protect,
+checkPermission("stores"),
+getStores
 );
 
 router.post("/switch", protect, switchStore);
@@ -30,13 +32,14 @@ router.post("/switch", protect, switchStore);
 router.get(
   "/current",
   protect,
+  checkPermission("stores"),
   getCurrentStore
 );
 
 router.patch(
   "/:id/status",
   protect,
-  authorize("OWNER"),
+  checkPermission("stores"),
   toggleStoreStatus
 );
 

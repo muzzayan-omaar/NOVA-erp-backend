@@ -16,6 +16,8 @@ import payrollRoutes from "./routes/payrollRoutes.js";
 import storeRoutes from "./routes/storeRoutes.js";
 import reportsRoutes from "./routes/reportsRoutes.js";
 
+import notificationRoutes from "./modules/notifications/notification.routes.js";
+
 const app = express();
 
 const limiter = rateLimit({
@@ -47,5 +49,9 @@ app.use("/api/users", userRoutes);
 app.use("/api/payroll", payrollRoutes);
 app.use("/api/stores", storeRoutes);
 app.use("/api/reports", reportsRoutes);
+app.use(
+    "/api/notifications",
+    notificationRoutes
+);
 
 export default app;

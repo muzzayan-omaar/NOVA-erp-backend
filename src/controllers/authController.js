@@ -58,7 +58,7 @@ export const registerStoreOwner = async (req, res) => {
 
         passwordHash,
 
-        role: "OWNER",
+        role: "GENERAL_MANAGER",
 
         storeId: store.id,
 

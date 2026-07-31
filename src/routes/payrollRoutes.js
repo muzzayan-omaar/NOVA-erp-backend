@@ -5,6 +5,7 @@ import {
 createPayroll,
 getPayroll
 } from "../controllers/payrollController.js";
+import checkPermission from "../middleware/checkPermission.js";
 
 
 const router = express.Router();
@@ -12,7 +13,12 @@ const router = express.Router();
 
 router.post("/",protect,createPayroll);
 
-router.get("/",protect,getPayroll);
+router.get(
+"/",
+protect,
+checkPermission("payroll"),
+getPayroll
+);
 
 
 export default router;

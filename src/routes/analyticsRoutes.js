@@ -5,11 +5,22 @@ import {
  getAdvancedAnalytics,
  getTaxReport
 } from "../controllers/analyticsController.js";
+import analyticsAccess from "../middleware/analyticsAccess.js";
 
 const router = express.Router();
 
-router.get("/", protect, getDashboardAnalytics);
-router.get("/advanced", protect, getAdvancedAnalytics);
+router.get(
+"/",
+protect,
+analyticsAccess,
+getDashboardAnalytics
+);
+router.get(
+"/advanced",
+protect,
+analyticsAccess,
+getAdvancedAnalytics
+);
 router.get("/tax", protect, getTaxReport);
 
 export default router;

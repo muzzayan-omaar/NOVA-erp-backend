@@ -6,6 +6,7 @@ import {
   getSales,
   getTodayStats
 } from "../controllers/saleController.js";
+import checkPermission from "../middleware/checkPermission.js";
 
 
 const router = express.Router();
@@ -17,9 +18,10 @@ const router = express.Router();
  * POST /api/sales
  */
 router.post(
-  "/",
-  protect,
-  createSale
+"/",
+protect,
+checkPermission("sales"),
+createSale
 );
 
 

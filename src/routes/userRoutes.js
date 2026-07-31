@@ -8,34 +8,35 @@ import {
 
 import protect from "../middleware/protect.js";
 import authorize from "../middleware/authorize.js";
+import checkPermission from "../middleware/checkPermission.js";
 
 const router = express.Router();
 
 router.get(
 "/",
 protect,
-authorize("OWNER","MANAGER"),
+checkPermission("users"),
 getUsers
 );
 
 router.post(
 "/",
 protect,
-authorize("OWNER","MANAGER"),
+checkPermission("users"),
 createUser
 );
 
 router.patch(
 "/:id",
 protect,
-authorize("OWNER","MANAGER"),
+checkPermission("users"),
 updateUser
 );
 
 router.delete(
 "/:id",
 protect,
-authorize("OWNER"),
+checkPermission("users"),
 deleteUser
 );
 

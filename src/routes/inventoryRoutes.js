@@ -5,6 +5,7 @@ import {
   getMovements,
   adjustStock,
 } from "../controllers/inventoryController.js";
+import checkPermission from "../middleware/checkPermission.js";
 
 
 const router = express.Router();
@@ -17,6 +18,7 @@ const router = express.Router();
 router.get(
   "/movements",
   protect,
+  checkPermission("inventory"),
   getMovements
 );
 
