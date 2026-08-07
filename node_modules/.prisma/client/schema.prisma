@@ -86,9 +86,10 @@ model User {
   company        Company             @relation(fields: [companyId], references: [id])
   store          Store               @relation(fields: [storeId], references: [id])
 
-  voidedSales        Sale[]       @relation("SaleVoidedBy")
-  authorizedVoids    Sale[]       @relation("SaleAuthorizedBy")
-  expensesCreated    Expense[]    @relation("ExpenseCreatedBy")
+  voidedSales     Sale[]    @relation("SaleVoidedBy")
+  authorizedVoids Sale[]    @relation("SaleAuthorizedBy")
+  expensesCreated Expense[] @relation("ExpenseCreatedBy")
+
   stockCountsCreated StockCount[] @relation("StockCountCreatedBy")
 
   @@unique([companyId, email])
@@ -291,8 +292,7 @@ model StockCount {
   items       StockCountItem[]
   company     Company          @relation(fields: [companyId], references: [id])
   store       Store            @relation(fields: [storeId], references: [id])
-
-  createdBy User @relation("StockCountCreatedBy", fields: [createdById], references: [id])
+  createdBy   User             @relation("StockCountCreatedBy", fields: [createdById], references: [id])
 
   @@map("stock_count")
 }

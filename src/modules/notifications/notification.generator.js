@@ -6,63 +6,65 @@ import {
 
 
 
-export const generateLowStockNotifications = async(companyId)=>{
-
+export const generateLowStockNotifications = async (companyId) => {
 
     const products = await prisma.product.findMany({
 
-        where:{
+        where: {
 
             companyId,
 
-            stockQuantity:{
-                lte:5
+            stockQuantity: {
+                lte: 5
             },
 
-            isActive:true
+            isActive: true
 
         }
 
     });
 
+    const today = new Date().toISOString().slice(0, 10); // e.g. "2026-08-07"
 
-
-    for(const product of products){
-
+    for (const product of products) {
 
         await createNotification({
 
-    companyId,
+            companyId,
 
-    storeId:product.storeId,
+            storeId: product.storeId,
 
-    title:"Low Stock Alert",
+            title: "Low Stock Alert",
 
-    message:
-    `${product.name} is running low. Current stock: ${product.stockQuantity}`,
+            message:
+            `${product.name} is running low. Current stock: ${product.stockQuantity}`,
 
-    type:"LOW_STOCK",
+            type: "LOW_STOCK",
 
-    priority:
-    product.stockQuantity === 0
-    ?
-    "CRITICAL"
-    :
-    "HIGH",
+            priority:
+            product.stockQuantity === 0
+            ?
+            "CRITICAL"
+            :
+            "HIGH",
 
-    metadata:{
-        productId: product.id,
-        productName: product.name,
-        stockQuantity: product.stockQuantity
-    },
+            // Date-scoped: this product can alert again on a NEW day once it's
+            // still (or newly) low — but won't spam multiple times per day.
+            // Once restocked above threshold, a future dip generates a fresh key.
+            uniqueKey:
+            `LOW_STOCK_${product.id}_${today}`,
 
-    uniqueKey:
-    `low-stock-${product.id}`
+            metadata: {
 
-});
+                productId: product.id,
+                productName: product.name,
+                currentStock: product.stockQuantity,
+                threshold: 5
 
+            }
+
+        });
 
     }
-
 
 };

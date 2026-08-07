@@ -17,6 +17,7 @@ import storeRoutes from "./routes/storeRoutes.js";
 import reportsRoutes from "./routes/reportsRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
 import expenseRoutes from "./routes/expenseRoutes.js";
+import stockCountRoutes from "./routes/stockCountRoutes.js";
 
 import notificationRoutes from "./modules/notifications/notification.routes.js";
 
@@ -55,6 +56,7 @@ app.use("/api/stores", storeRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/audit", auditRoutes);
 app.use("/api/expenses", expenseRoutes);
+app.use("/api/stock-counts", stockCountRoutes);
 app.use(
     "/api/notifications",
     notificationRoutes

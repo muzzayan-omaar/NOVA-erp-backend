@@ -153,22 +153,7 @@ export const createSale = async (req, res) => {
 
     // Notifications (after sale + stock update succeed)
     try {
-      await createNotification({
-  companyId: req.context.companyId,  
-  storeId: req.context.storeId,
-  userId: req.context.userId,
-  title: "Sale Completed",
-  message: `Sale completed successfully. Amount: ${totalAmount}`,
-  type: "SALE_COMPLETED",             
-  priority: "LOW",
-  uniqueKey: `SALE_${sale.id}`,
-  metadata: {
-    saleId: sale.id,
-    amount: totalAmount,
-    paymentMethod,
-    items: items.length,
-  },
-});
+      
 
       await generateLowStockNotifications(req.context.companyId);
     } catch (notifyErr) {

@@ -100,16 +100,21 @@ export const markAsRead = async (id, companyId) => {
 /**
  * MARK ALL AS READ for this user/company
  */
-export const markAllAsRead = async ({ companyId, userId }) => {
-  return prisma.notification.updateMany({
+// mark all notifications read
+export const markAllAsRead = async ({ companyId, userId, storeId }) => {
+  return await prisma.notification.updateMany({
     where: {
       companyId,
       isRead: false,
-      OR: [{ userId }, { userId: null }]
+      OR: [
+        { userId },
+        { userId: null, storeId },
+        { userId: null, storeId: null },
+      ],
     },
     data: {
-      isRead: true
-    }
+      isRead: true,
+    },
   });
 };
 
