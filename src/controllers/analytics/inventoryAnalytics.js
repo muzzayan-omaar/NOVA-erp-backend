@@ -1,273 +1,126 @@
 import prisma from "../../lib/prisma.js";
 
-import {
-    toNumber
-} from "./analyticsHelper.js";
+import { toNumber } from "./analyticsHelper.js";
 
-export const inventoryAnalytics = async (
+export const inventoryAnalytics = async (companyId, storeId) => {
+  const where = {
     companyId,
-    storeId
-)=>{
+  };
 
-    const where={
+  if (storeId !== "ALL") {
+    where.storeId = storeId;
+  }
 
-    companyId
-
-};
-
-if(storeId !== "ALL"){
-
-    where.storeId=storeId;
-
-}
-
-const movements =
-await prisma.inventoryMovement.findMany({
-
+  // Movements
+  const movements = await prisma.inventoryMovement.findMany({
     where,
+    include: {
+      product: true,
+    },
+  });
 
-    include:{
-
-        product:true
-
-    }
-
-});
-
-const products =
-await prisma.product.findMany({
-
-    where
-
-});
-
-let stockIn=0;
-
-let stockOut=0;
-
-let adjustments=0;
-
-movements.forEach((movement)=>{
-
-    switch(movement.type){
-
-        case "IN":
-
-            stockIn +=
-            toNumber(movement.quantity);
-
-            break;
-
-        case "OUT":
-
-        case "SALE":
-
-            stockOut +=
-            toNumber(movement.quantity);
-
-            break;
-
-        case "ADJUSTMENT":
-
-            adjustments +=
-            toNumber(movement.quantity);
-
-            break;
-
-    }
-
-});
-
-const inventoryValue =
-
-products.reduce(
-
-(sum,product)=>
-
-sum +
-
-(
-
-toNumber(product.buyingPrice)
-
-*
-
-toNumber(product.stockQuantity)
-
-),
-
-0
-
-);
-
-const lowStock=
-
-products.filter(
-
-product=>
-
-toNumber(product.stockQuantity)<=10
-
-);
-
-const overStock=
-
-products.filter(
-
-product=>
-
-toNumber(product.stockQuantity)>=100
-
-);
-
-const sales=
-await prisma.sale.findMany({
-
+  // Products
+  const products = await prisma.product.findMany({
     where,
+  });
 
-    include:{
+  let stockIn = 0;
+  let stockOut = 0;
+  let adjustments = 0;
 
-        saleItems:{
-
-            include:{
-
-                product:true
-
-            }
-
-        }
-
+  movements.forEach((movement) => {
+    switch (movement.type) {
+      case "IN":
+        stockIn += toNumber(movement.quantity);
+        break;
+      case "OUT":
+      case "SALE":
+        stockOut += toNumber(movement.quantity);
+        break;
+      case "ADJUSTMENT":
+        adjustments += toNumber(movement.quantity);
+        break;
     }
+  });
 
-});
+  const inventoryValue = products.reduce(
+    (sum, product) =>
+      sum + toNumber(product.buyingPrice) * toNumber(product.stockQuantity),
+    0
+  );
 
-const soldMap={};
+  const lowStock = products.filter(
+    (product) => toNumber(product.stockQuantity) <= 10
+  );
 
-sales.forEach((sale)=>{
+  const overStock = products.filter(
+    (product) => toNumber(product.stockQuantity) >= 100
+  );
 
-    sale.saleItems.forEach((item)=>{
+  // Sales – only completed ones
+  const sales = await prisma.sale.findMany({
+    where: {
+      ...where,
+      status: "COMPLETED",           // ← added
+    },
+    include: {
+      saleItems: {
+        include: {
+          product: true,
+        },
+      },
+    },
+  });
 
-        if(!soldMap[item.productId]){
+  const soldMap = {};
 
-            soldMap[item.productId]={
+  sales.forEach((sale) => {
+    sale.saleItems.forEach((item) => {
+      if (!soldMap[item.productId]) {
+        soldMap[item.productId] = {
+          name: item.product.name,
+          sold: 0,
+          revenue: 0,
+        };
+      }
 
-                name:item.product.name,
-
-                sold:0,
-
-                revenue:0
-
-            };
-
-        }
-
-        soldMap[item.productId].sold +=
-
-        item.quantity;
-
-        soldMap[item.productId].revenue +=
-
-        toNumber(item.subtotal);
-
+      soldMap[item.productId].sold += item.quantity;
+      soldMap[item.productId].revenue += toNumber(item.subtotal);
     });
+  });
 
-});
+  const fastMovingProducts = Object.values(soldMap)
+    .sort((a, b) => b.sold - a.sold)
+    .slice(0, 10);
 
-const fastMovingProducts=
+  const soldIds = Object.keys(soldMap);
 
-Object.values(soldMap)
+  const deadStock = products.filter(
+    (product) =>
+      !soldIds.includes(product.id) && toNumber(product.stockQuantity) > 0
+  );
 
-.sort(
+  const totalSold = Object.values(soldMap).reduce(
+    (sum, item) => sum + item.sold,
+    0
+  );
 
-(a,b)=>
+  const totalStock = products.reduce(
+    (sum, product) => sum + toNumber(product.stockQuantity),
+    0
+  );
 
-b.sold-a.sold
+  const inventoryTurnover = totalStock === 0 ? 0 : totalSold / totalStock;
 
-)
-
-.slice(0,10);
-
-const soldIds=
-
-Object.keys(soldMap);
-
-const deadStock=
-
-products.filter(
-
-product=>
-
-!soldIds.includes(product.id)
-
-&&
-
-toNumber(product.stockQuantity)>0
-
-);
-
-const totalSold=
-
-Object.values(soldMap)
-
-.reduce(
-
-(sum,item)=>
-
-sum+
-
-item.sold,
-
-0
-
-);
-
-const totalStock=
-
-products.reduce(
-
-(sum,product)=>
-
-sum+
-
-toNumber(product.stockQuantity),
-
-0
-
-);
-
-const inventoryTurnover=
-
-totalStock===0
-
-?
-
-0
-
-:
-
-totalSold/totalStock;
-
-return{
-
+  return {
     stockIn,
-
     stockOut,
-
     adjustments,
-
     inventoryValue,
-
     inventoryTurnover,
-
     lowStock,
-
     overStock,
-
     fastMovingProducts,
-
-    deadStock
-
+    deadStock,
+  };
 };
-
-};
-

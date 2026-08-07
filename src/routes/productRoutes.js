@@ -23,5 +23,10 @@ router.delete(
   checkPermission("products"),
   deleteProduct
 );
-
+router.post(
+  "/",
+  protect,
+  checkPermission("products"),
+  createProduct
+);
 export default router;

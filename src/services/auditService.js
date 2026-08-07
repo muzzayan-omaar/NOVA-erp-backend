@@ -1,10 +1,17 @@
 import prisma from '../lib/prisma.js';
 
-const createAuditLog = async ({ userId, action, entityType, entityId, metadata }) => {
+const createAuditLog = async ({ userId, companyId, storeId, action, entityType, entityId, metadata }) => {
   try {
+    if (!companyId) {
+      console.error('Audit log skipped: companyId is required', { action, entityType, entityId });
+      return;
+    }
+
     await prisma.auditLog.create({
       data: {
         userId,
+        companyId,
+        storeId,
         action,
         entityType,
         entityId,

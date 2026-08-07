@@ -5,7 +5,8 @@ import {
     fetchNotifications,
     unreadNotifications,
     readNotification,
-    readAllNotifications
+    readAllNotifications,
+    removeNotification,
 
 } from "./notification.controller.js";
 
@@ -57,5 +58,5 @@ router.patch(
 );
 
 
-
+router.delete("/:id", removeNotification);
 export default router;

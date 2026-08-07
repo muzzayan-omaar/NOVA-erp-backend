@@ -100,95 +100,57 @@ message:err.message
 
 
 // UPDATE supplier
-export const updateSupplier = async(req,res)=>{
+export const updateSupplier = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, phone, email, address, totalOwed } = req.body;
+    const { companyId, storeId } = req.context;
 
-try{
+    const existing = await prisma.supplier.findFirst({
+      where: { id, companyId, storeId },
+    });
 
-const {id}=req.params;
+    if (!existing) {
+      return res.status(404).json({ message: "Supplier not found" });
+    }
 
+    const updated = await prisma.supplier.update({
+      where: { id },
+      data: {
+        name,
+        phone,
+        email,
+        address,
+        totalOwed: Number(totalOwed) || 0,
+      },
+    });
 
-const {
-name,
-phone,
-email,
-address,
-totalOwed
-}=req.body;
-
-
-
-const updated = await prisma.supplier.update({
-
-where:{
-id
-},
-
-data:{
-
-name,
-phone,
-email,
-address,
-
-totalOwed:Number(totalOwed)||0
-
-}
-
-});
-
-
-res.json(updated);
-
-
-
-}catch(err){
-
-console.error(err);
-
-res.status(500).json({
-message:err.message
-});
-
-}
-
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
 };
 
-
-
-
-
-
 // DELETE supplier
-export const deleteSupplier = async(req,res)=>{
+export const deleteSupplier = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { companyId, storeId } = req.context;
 
-try{
+    const existing = await prisma.supplier.findFirst({
+      where: { id, companyId, storeId },
+    });
 
-const {id}=req.params;
+    if (!existing) {
+      return res.status(404).json({ message: "Supplier not found" });
+    }
 
+    await prisma.supplier.delete({ where: { id } });
 
-await prisma.supplier.delete({
-
-where:{
-id
-}
-
-});
-
-
-res.json({
-message:"Supplier deleted"
-});
-
-
-
-}catch(err){
-
-console.error(err);
-
-res.status(500).json({
-message:err.message
-});
-
-}
-
+    res.json({ message: "Supplier deleted" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
 };

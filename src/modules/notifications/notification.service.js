@@ -1,195 +1,130 @@
 import prisma from "../../lib/prisma.js";
+import { emitNotification } from "./notification.socket.js";
 
-
-// Create notification
-export const createNotification = async(data)=>{
-
-    try{
-
-        return await prisma.notification.create({
-
-            data
-
-        });
-
-
-    }catch(error){
-
-
-        // duplicate uniqueKey protection
-        if(error.code === "P2002"){
-
-            return null;
-
+/**
+ * CREATE (with optional uniqueKey dedupe)
+ */
+export const createNotification = async (data) => {
+  const existing = data.uniqueKey
+    ? await prisma.notification.findUnique({
+        where: {
+          companyId_uniqueKey: {
+            companyId: data.companyId,
+            uniqueKey: data.uniqueKey
+          }
         }
+      })
+    : null;
 
+  if (existing) {
+    return existing;
+  }
 
-        throw error;
+  const notification = await prisma.notification.create({
+    data
+  });
 
+  const io = global.io;
+  emitNotification(io, notification);
+
+  return notification;
+};
+
+/**
+ * LIST notifications for a user/company/store
+ */
+export const getNotifications = async ({ companyId, userId, storeId }) => {
+  return prisma.notification.findMany({
+    where: {
+      companyId,
+      AND: [
+        {
+          OR: [
+            { userId },           // personal
+            { userId: null },     // company-wide
+          ],
+        },
+        storeId
+          ? {
+              OR: [
+                { storeId },
+                { storeId: null }, // company-level
+              ],
+            }
+          : {},
+      ],
+    },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+};
+
+/**
+ * UNREAD COUNT
+ */
+export const getUnreadCount = async ({ companyId, userId, storeId }) => {
+  return prisma.notification.count({
+    where: {
+      companyId,
+      isRead: false,
+      OR: [
+        { userId },
+        { userId: null },
+        ...(storeId ? [{ storeId }] : [])
+      ]
     }
-
+  });
 };
 
-
-
-// Get notifications for user/store/company
-export const getNotifications = async({
-    companyId,
-    userId,
-    storeId
-})=>{
-
-
-    return await prisma.notification.findMany({
-
-        where:{
-
-            companyId,
-
-            OR:[
-
-                {
-                    userId
-                },
-
-                {
-                    userId:null,
-                    storeId
-                },
-
-                {
-                    userId:null,
-                    storeId:null
-                }
-
-            ]
-
-        },
-
-        orderBy:{
-
-            createdAt:"desc"
-
-        }
-
-
-    });
-
-
-};
-
-
-
-
-// unread count
-
-export const getUnreadCount = async({
-    companyId,
-    userId,
-    storeId
-})=>{
-
-
-    return await prisma.notification.count({
-
-        where:{
-
-            companyId,
-
-            isRead:false,
-
-
-            OR:[
-
-                {
-                    userId
-                },
-
-
-                {
-                    userId:null,
-                    storeId
-                },
-
-
-                {
-                    userId:null,
-                    storeId:null
-                }
-
-            ]
-
-        }
-
-    });
-
-
-};
-
-
-
-
-// mark single notification read
-
-export const markAsRead = async(id)=>{
-
-
+/**
+ * MARK ONE AS READ (with ownership check)
+ */
+export const markAsRead = async (id, companyId) => {
+  try {
     return await prisma.notification.update({
-
-        where:{
-            id
-        },
-
-        data:{
-            isRead:true
-        }
-
+      where: {
+        id,
+        companyId, // prevents cross-company access
+      },
+      data: {
+        isRead: true,
+        // optional: readAt: new Date()
+      },
     });
-
-
+  } catch (error) {
+    // Prisma throws P2025 if record not found
+    return null;
+  }
 };
 
+/**
+ * MARK ALL AS READ for this user/company
+ */
+export const markAllAsRead = async ({ companyId, userId }) => {
+  return prisma.notification.updateMany({
+    where: {
+      companyId,
+      isRead: false,
+      OR: [{ userId }, { userId: null }]
+    },
+    data: {
+      isRead: true
+    }
+  });
+};
 
-
-// mark all notifications read
-
-export const markAllAsRead = async({
-    companyId,
-    userId
-})=>{
-
-
-    return await prisma.notification.updateMany({
-
-        where:{
-
-            companyId,
-
-            isRead:false,
-
-            OR:[
-
-                {
-                    userId
-                },
-
-                {
-                    userId:null
-                }
-
-            ]
-
-        },
-
-
-        data:{
-
-            isRead:true
-
-        }
-
-
+/**
+ * DELETE notification
+ */
+export const deleteNotification = async (id, companyId) => {
+  try {
+    return await prisma.notification.delete({
+      where: {
+        id,
+        companyId,
+      },
     });
-
-
+  } catch (error) {
+    return null;
+  }
 };

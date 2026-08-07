@@ -32,45 +32,34 @@ export const generateLowStockNotifications = async(companyId)=>{
 
         await createNotification({
 
-            companyId,
+    companyId,
 
-            storeId:product.storeId,
+    storeId:product.storeId,
 
+    title:"Low Stock Alert",
 
-            title:"Low Stock Alert",
+    message:
+    `${product.name} is running low. Current stock: ${product.stockQuantity}`,
 
+    type:"LOW_STOCK",
 
-            message:
-            `${product.name} is running low. Current stock: ${product.stockQuantity}`,
+    priority:
+    product.stockQuantity === 0
+    ?
+    "CRITICAL"
+    :
+    "HIGH",
 
+    metadata:{
+        productId: product.id,
+        productName: product.name,
+        stockQuantity: product.stockQuantity
+    },
 
-            type:"LOW_STOCK",
+    uniqueKey:
+    `low-stock-${product.id}`
 
-
-            priority:
-            product.stockQuantity === 0
-            ?
-            "CRITICAL"
-            :
-            "HIGH",
-
-
-            uniqueKey:
-            `LOW_STOCK_${product.id}`,
-
-            metadata:{
-
-                productId:product.id,
-
-                productName:product.name,
-
-                currentStock:product.stockQuantity,
-
-                threshold:5
-
-            }
-
-        });
+});
 
 
     }

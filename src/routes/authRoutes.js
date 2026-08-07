@@ -2,6 +2,7 @@ import express from "express";
 import {
   registerStoreOwner,
   loginUser,
+  getCurrentUser,
 } from "../controllers/authController.js";
 
 import protect from "../middleware/protect.js";
@@ -14,5 +15,11 @@ router.post("/login", loginUser);
 
 // authenticated
 router.post("/switch-store", protect, switchStore);
+
+router.get(
+    "/me",
+    protect,
+    getCurrentUser
+);
 
 export default router;

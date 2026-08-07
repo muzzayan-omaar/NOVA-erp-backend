@@ -1,5 +1,6 @@
 import prisma from "../lib/prisma.js";
 import createAuditLog from "../services/auditService.js";
+import bcrypt from "bcryptjs";
 
 import {
   createNotification
@@ -136,6 +137,8 @@ export const createSale = async (req, res) => {
 
     await createAuditLog({
       userId: req.context.userId,
+      companyId: req.context.companyId,
+      storeId: req.context.storeId,
       action: "SALE_CREATED",
       entityType: "sale",
       entityId: sale.id,
@@ -143,28 +146,29 @@ export const createSale = async (req, res) => {
         totalAmount,
         vatAmount,
         subtotal,
-        itemCount: items.length
-      }
+        itemCount: items.length,
+        paymentMethod,
+      },
     });
 
     // Notifications (after sale + stock update succeed)
     try {
       await createNotification({
-        companyId: req.context.companyId,
-        storeId: req.context.storeId,
-        userId: req.context.userId,
-        title: "Sale Completed",
-        message: `Sale completed successfully. Amount: ${totalAmount}`,
-        type: "SALE",
-        priority: "LOW",
-        uniqueKey: `SALE_${sale.id}`,
-        metadata: {
-          saleId: sale.id,
-          amount: totalAmount,
-          paymentMethod,
-          items: items.length
-        }
-      });
+  companyId: req.context.companyId,  
+  storeId: req.context.storeId,
+  userId: req.context.userId,
+  title: "Sale Completed",
+  message: `Sale completed successfully. Amount: ${totalAmount}`,
+  type: "SALE_COMPLETED",             
+  priority: "LOW",
+  uniqueKey: `SALE_${sale.id}`,
+  metadata: {
+    saleId: sale.id,
+    amount: totalAmount,
+    paymentMethod,
+    items: items.length,
+  },
+});
 
       await generateLowStockNotifications(req.context.companyId);
     } catch (notifyErr) {
@@ -261,5 +265,281 @@ export const getTodayStats = async (req, res) => {
     res.status(500).json({
       message: "Failed to fetch today stats"
     });
+  }
+};
+
+
+/**
+ * REQUEST VOID or REFUND
+ * Called by the cashier. No manager credentials needed.
+ * Freezes the sale as PENDING_VOID / PENDING_REFUND, does NOT touch stock yet.
+ * POST /api/sales/:id/request-void
+ * POST /api/sales/:id/request-refund
+ * body: { reason }
+ */
+const requestSaleAction = (targetStatus, notifyTitle) => async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ message: "A reason is required" });
+    }
+
+    const sale = await prisma.sale.findFirst({
+      where: {
+        id,
+        companyId: req.context.companyId,
+        storeId: req.context.storeId,
+      },
+    });
+
+    if (!sale) {
+      return res.status(404).json({ message: "Sale not found" });
+    }
+
+    if (sale.status !== "COMPLETED") {
+      return res.status(400).json({ message: `Sale is already ${sale.status}` });
+    }
+
+    const updatedSale = await prisma.sale.update({
+      where: { id: sale.id },
+      data: {
+        status: targetStatus,
+        requestedAt: new Date(),
+        voidReason: reason,
+        voidedById: req.context.userId,
+      },
+    });
+
+    await createAuditLog({
+      userId: req.context.userId,
+      companyId: req.context.companyId,
+      storeId: req.context.storeId,
+      action: targetStatus === "PENDING_VOID" ? "VOID_REQUESTED" : "REFUND_REQUESTED",
+      entityType: "sale",
+      entityId: sale.id,
+      metadata: { reason, totalAmount: sale.totalAmount },
+    });
+
+    // Notify every General Manager in the company — not just one store.
+    const generalManagers = await prisma.user.findMany({
+      where: {
+        companyId: req.context.companyId,
+        role: "GENERAL_MANAGER",
+        isActive: true,
+      },
+      select: { id: true },
+    });
+
+    await Promise.all(
+      generalManagers.map((gm) =>
+        createNotification({
+          companyId: req.context.companyId,
+          storeId: req.context.storeId,
+          userId: gm.id,
+          title: notifyTitle,
+          message: `UGX ${Number(sale.totalAmount).toLocaleString()} sale — reason: ${reason}`,
+          type: "APPROVAL_REQUEST",
+          priority: "HIGH",
+          uniqueKey: `${targetStatus}_${sale.id}`,
+        })
+      )
+    );
+
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("sale:approval_requested", {
+        storeId: req.context.storeId,
+        saleId: sale.id,
+        status: targetStatus,
+      });
+    }
+
+    res.json(updatedSale);
+  } catch (error) {
+    console.error("REQUEST SALE ACTION ERROR:", error);
+    res.status(500).json({ message: "Failed to submit request" });
+  }
+};
+
+export const requestVoidSale = requestSaleAction("PENDING_VOID", "Void Request");
+export const requestRefundSale = requestSaleAction("PENDING_REFUND", "Refund Request");
+
+/**
+ * GET PENDING REQUESTS — GM only.
+ * Company-wide, not just the GM's currently active store.
+ * GET /api/sales/pending-requests
+ */
+export const getPendingSaleRequests = async (req, res) => {
+  try {
+    const sales = await prisma.sale.findMany({
+      where: {
+        companyId: req.context.companyId,
+        status: { in: ["PENDING_VOID", "PENDING_REFUND"] },
+      },
+      include: {
+        saleItems: { include: { product: true } },
+        user: { select: { id: true, name: true, role: true } },
+        voidedBy: { select: { id: true, name: true, role: true } },
+        store: { select: { id: true, name: true } },
+      },
+      orderBy: { requestedAt: "asc" },
+    });
+
+    res.json(sales);
+  } catch (error) {
+    console.error("GET PENDING REQUESTS ERROR:", error);
+    res.status(500).json({ message: "Failed to fetch pending requests" });
+  }
+};
+
+/**
+ * APPROVE a pending void/refund — GM only.
+ * Reverses stock now, finalizes status.
+ * POST /api/sales/:id/approve
+ */
+export const approveSaleAction = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const sale = await prisma.sale.findFirst({
+      where: { id, companyId: req.context.companyId },
+      include: { saleItems: true },
+    });
+
+    if (!sale) {
+      return res.status(404).json({ message: "Sale not found" });
+    }
+
+    if (!["PENDING_VOID", "PENDING_REFUND"].includes(sale.status)) {
+      return res.status(400).json({ message: "This sale has no pending request" });
+    }
+
+    const finalStatus = sale.status === "PENDING_VOID" ? "VOID" : "REFUNDED";
+
+    const updatedSale = await prisma.$transaction(async (tx) => {
+      for (const item of sale.saleItems) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stockQuantity: { increment: item.quantity } },
+        });
+
+        await tx.inventoryMovement.create({
+          data: {
+            companyId: sale.companyId,
+            storeId: sale.storeId,
+            productId: item.productId,
+            createdById: req.context.userId,
+            type: "IN",
+            quantity: item.quantity,
+            reason: `Sale ${finalStatus.toLowerCase()} (approved): ${sale.voidReason}`,
+          },
+        });
+      }
+
+      return tx.sale.update({
+        where: { id: sale.id },
+        data: {
+          status: finalStatus,
+          voidedAt: new Date(),
+          authorizedById: req.context.userId,
+        },
+      });
+    });
+
+    await createAuditLog({
+      userId: req.context.userId,
+      companyId: sale.companyId,
+      storeId: sale.storeId,
+      action: finalStatus === "VOID" ? "SALE_VOID_APPROVED" : "SALE_REFUND_APPROVED",
+      entityType: "sale",
+      entityId: sale.id,
+      metadata: {
+        reason: sale.voidReason,
+        requestedBy: sale.voidedById,
+        totalAmount: sale.totalAmount,
+      },
+    });
+
+    if (sale.voidedById) {
+      await createNotification({
+        companyId: sale.companyId,
+        storeId: sale.storeId,
+        userId: sale.voidedById,
+        title: `${finalStatus === "VOID" ? "Void" : "Refund"} Approved`,
+        message: `Your request for UGX ${Number(sale.totalAmount).toLocaleString()} was approved.`,
+        type: "APPROVAL_REQUEST",
+        priority: "MEDIUM",
+        uniqueKey: `APPROVED_${sale.id}`,
+      });
+    }
+
+    res.json(updatedSale);
+  } catch (error) {
+    console.error("APPROVE SALE ACTION ERROR:", error);
+    res.status(500).json({ message: "Failed to approve request" });
+  }
+};
+
+/**
+ * REJECT a pending void/refund — GM only.
+ * Reverts sale back to COMPLETED, no stock change (nothing was ever reversed).
+ * POST /api/sales/:id/reject
+ * body: { rejectionReason }
+ */
+export const rejectSaleAction = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rejectionReason } = req.body;
+
+    const sale = await prisma.sale.findFirst({
+      where: { id, companyId: req.context.companyId },
+    });
+
+    if (!sale) {
+      return res.status(404).json({ message: "Sale not found" });
+    }
+
+    if (!["PENDING_VOID", "PENDING_REFUND"].includes(sale.status)) {
+      return res.status(400).json({ message: "This sale has no pending request" });
+    }
+
+    const updatedSale = await prisma.sale.update({
+      where: { id: sale.id },
+      data: {
+        status: "COMPLETED",
+        rejectionReason: rejectionReason || null,
+        authorizedById: req.context.userId,
+      },
+    });
+
+    await createAuditLog({
+      userId: req.context.userId,
+      companyId: sale.companyId,
+      storeId: sale.storeId,
+      action: "SALE_REQUEST_REJECTED",
+      entityType: "sale",
+      entityId: sale.id,
+      metadata: { rejectionReason, originalReason: sale.voidReason },
+    });
+
+    if (sale.voidedById) {
+      await createNotification({
+        companyId: sale.companyId,
+        storeId: sale.storeId,
+        userId: sale.voidedById,
+        title: "Request Rejected",
+        message: `Your request for sale UGX ${Number(sale.totalAmount).toLocaleString()} was rejected.${rejectionReason ? " Reason: " + rejectionReason : ""}`,
+        type: "APPROVAL_REQUEST",
+        priority: "MEDIUM",
+        uniqueKey: `REJECTED_${sale.id}`,
+      });
+    }
+
+    res.json(updatedSale);
+  } catch (error) {
+    console.error("REJECT SALE ACTION ERROR:", error);
+    res.status(500).json({ message: "Failed to reject request" });
   }
 };

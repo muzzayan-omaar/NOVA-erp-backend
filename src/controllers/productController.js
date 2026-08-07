@@ -38,12 +38,14 @@ export const createProduct = async (req, res) => {
     });
 
     await createAuditLog({
-      userId: req.context.userId,
-      action: "PRODUCT_CREATED",
-      entityType: "product",
-      entityId: product.id,
-      metadata: product,
-    });
+    userId: req.context.userId,
+    companyId: req.context.companyId,
+    storeId: req.context.storeId,
+    action: "PRODUCT_CREATED",
+    entityType: "product",
+    entityId: product.id,
+    metadata: product,
+  });
 
     res.status(201).json(product);
   } catch (error) {
@@ -99,11 +101,35 @@ export const updateProduct = async (req, res) => {
       });
     }
 
+    const {
+      name,
+      barcode,
+      sku,
+      buyingPrice,
+      sellingPrice,
+      stockQuantity,
+      unitType,
+      isActive,
+    } = req.body;
+
     const product = await prisma.product.update({
-      where: {
-        id,
+      where: { id },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(barcode !== undefined && { barcode }),
+        ...(sku !== undefined && { sku }),
+        ...(buyingPrice !== undefined && {
+          buyingPrice: parseFloat(buyingPrice),
+        }),
+        ...(sellingPrice !== undefined && {
+          sellingPrice: parseFloat(sellingPrice),
+        }),
+        ...(stockQuantity !== undefined && {
+          stockQuantity: parseFloat(stockQuantity),
+        }),
+        ...(unitType !== undefined && { unitType }),
+        ...(isActive !== undefined && { isActive }),
       },
-      data: req.body,
     });
 
     await createAuditLog({

@@ -4,7 +4,12 @@ import protect from "../middleware/protect.js";
 import {
   createSale,
   getSales,
-  getTodayStats
+  getTodayStats,
+  requestVoidSale,
+  requestRefundSale,
+  getPendingSaleRequests,
+  approveSaleAction,
+  rejectSaleAction
 } from "../controllers/saleController.js";
 import checkPermission from "../middleware/checkPermission.js";
 
@@ -47,7 +52,13 @@ router.get(
   protect,
   getTodayStats
 );
+router.get("/pending-requests", protect, checkPermission("audit"), getPendingSaleRequests);
+
+router.post("/:id/request-void", protect, requestVoidSale);
+router.post("/:id/request-refund", protect, requestRefundSale);
 
 
+router.post("/:id/approve", protect, checkPermission("audit"), approveSaleAction);
+router.post("/:id/reject", protect, checkPermission("audit"), rejectSaleAction);
 
 export default router;

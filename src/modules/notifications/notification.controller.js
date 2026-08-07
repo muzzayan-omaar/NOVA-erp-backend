@@ -3,7 +3,8 @@ import {
     getNotifications,
     getUnreadCount,
     markAsRead,
-    markAllAsRead
+    markAllAsRead,
+    deleteNotification,
 
 } from "./notification.service.js";
 
@@ -99,34 +100,21 @@ export const unreadNotifications = async(req,res)=>{
 
 
 
-export const readNotification = async(req,res)=>{
+export const readNotification = async (req, res) => {
+  try {
+    const notification = await markAsRead(
+      req.params.id,
+      req.user.companyId
+    );
 
-
-    try{
-
-
-        const notification = await markAsRead(
-            req.params.id
-        );
-
-
-        res.json(notification);
-
-
-
-    }catch(error){
-
-
-        res.status(500).json({
-
-            message:error.message
-
-        });
-
-
+    if (!notification) {
+      return res.status(404).json({ message: "Notification not found" });
     }
 
-
+    res.json(notification);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };
 
 
@@ -172,4 +160,21 @@ export const readAllNotifications = async(req,res)=>{
     }
 
 
+};
+
+export const removeNotification = async (req, res) => {
+  try {
+    const deleted = await deleteNotification(
+      req.params.id,
+      req.user.companyId
+    );
+
+    if (!deleted) {
+      return res.status(404).json({ message: "Notification not found" });
+    }
+
+    res.json({ message: "Notification deleted" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 };

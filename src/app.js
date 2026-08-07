@@ -15,6 +15,8 @@ import userRoutes from "./routes/userRoutes.js";
 import payrollRoutes from "./routes/payrollRoutes.js";
 import storeRoutes from "./routes/storeRoutes.js";
 import reportsRoutes from "./routes/reportsRoutes.js";
+import auditRoutes from "./routes/auditRoutes.js";
+import expenseRoutes from "./routes/expenseRoutes.js";
 
 import notificationRoutes from "./modules/notifications/notification.routes.js";
 
@@ -25,7 +27,9 @@ const limiter = rateLimit({
   max: 100 // limit each IP to 100 requests per windowMs
 })
 
-app.use(cors());
+app.use(cors({
+  origin: process.env.FRONTEND_URL || "http://localhost:5173",
+}));
 app.use(express.json());
 app.use(limiter);
 
@@ -49,6 +53,8 @@ app.use("/api/users", userRoutes);
 app.use("/api/payroll", payrollRoutes);
 app.use("/api/stores", storeRoutes);
 app.use("/api/reports", reportsRoutes);
+app.use("/api/audit", auditRoutes);
+app.use("/api/expenses", expenseRoutes);
 app.use(
     "/api/notifications",
     notificationRoutes

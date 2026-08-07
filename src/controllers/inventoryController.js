@@ -169,20 +169,13 @@ export const adjustStock = async (req, res) => {
 
 
     await createAuditLog({
-      userId:req.context.userId,
-
-      action:"INVENTORY_ADJUSTED",
-
-      entityType:"inventory_movement",
-
-      entityId:result.movement.id,
-
-      metadata:{
-        productId,
-        type,
-        quantity:qty,
-        newStock,
-      },
+      userId: req.context.userId,
+      companyId: req.context.companyId,
+      storeId: req.context.storeId,
+      action: "INVENTORY_ADJUSTED",
+      entityType: "inventory_movement",
+      entityId: result.movement.id,
+      metadata: { productId, type, quantity: qty, newStock },
     });
 
 
