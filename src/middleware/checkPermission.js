@@ -9,10 +9,7 @@ const checkPermission = (permission)=>{
 
       const role = req.user.role;
 
-      console.log("🔎 PERMISSION CHECK");
-      console.log("ROLE:", role);
-      console.log("REQUESTED:", permission);
-      console.log("AVAILABLE:", permissions[role]);
+      
 
 
       const allowedPermissions =
@@ -21,7 +18,7 @@ const checkPermission = (permission)=>{
 
       if(!allowedPermissions.includes(permission)){
 
-        console.log("❌ ACCESS DENIED");
+        
 
         return res.status(403).json({
           message:
@@ -31,7 +28,7 @@ const checkPermission = (permission)=>{
       }
 
 
-      console.log("✅ ACCESS GRANTED");
+     
 
       next();
 

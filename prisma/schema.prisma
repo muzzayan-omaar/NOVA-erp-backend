@@ -33,6 +33,9 @@ model Company {
   expenses    Expense[]
   stockCounts StockCount[]
 
+  subscription Subscription?
+payments     Payment[]
+
   @@map("company")
 }
 
@@ -82,6 +85,8 @@ model User {
   payrolls       Payroll[]
   sales          Sale[]
   notifications  Notification[]
+  isPlatformAdmin   Boolean   @default(false)
+paymentsSubmitted Payment[] @relation("PaymentSubmittedBy")
   activeStore    Store?              @relation("ActiveStore", fields: [activeStoreId], references: [id])
   company        Company             @relation(fields: [companyId], references: [id])
   store          Store               @relation(fields: [storeId], references: [id])
@@ -155,6 +160,9 @@ model Sale {
   invoiceNumber   String?
   requestedAt     DateTime?
   rejectionReason String?
+  clientReferenceId String?
+  clientCreatedAt   DateTime?
+  
   company         Company       @relation(fields: [companyId], references: [id])
   store           Store         @relation(fields: [storeId], references: [id])
   user            User          @relation(fields: [userId], references: [id])
@@ -167,7 +175,7 @@ model Sale {
 
   voidedBy     User? @relation("SaleVoidedBy", fields: [voidedById], references: [id])
   authorizedBy User? @relation("SaleAuthorizedBy", fields: [authorizedById], references: [id])
-
+  @@unique([companyId, clientReferenceId])
   @@map("sale")
 }
 
@@ -389,4 +397,93 @@ model Notification {
 
   @@unique([companyId, uniqueKey])
   @@map("notifications")
+}
+
+
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  REJECTED
+}
+
+enum PaymentMethodType {
+  MOBILE_MONEY
+  BANK_TRANSFER
+  CASH
+}
+
+model Subscription {
+  id        String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId String             @unique @db.Uuid
+  plan String @default("TRIAL")
+  status    SubscriptionStatus @default(TRIALING)
+  startDate DateTime           @default(now())
+  endDate   DateTime
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  company Company  @relation(fields: [companyId], references: [id])
+  payments Payment[]
+
+  @@map("subscription")
+}
+
+model Payment {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId       String            @db.Uuid
+  subscriptionId  String            @db.Uuid
+  amount          Float
+  method          PaymentMethodType
+  referenceNumber String
+  status          PaymentStatus     @default(PENDING_VERIFICATION)
+  submittedById   String            @db.Uuid
+  verifiedById    String?           @db.Uuid
+  verifiedAt      DateTime?
+  notes           String?
+  createdAt       DateTime          @default(now())
+
+  
+   company       Company        @relation(fields: [companyId], references: [id])
+  subscription  Subscription   @relation(fields: [subscriptionId], references: [id])
+  submittedBy   User           @relation("PaymentSubmittedBy", fields: [submittedById], references: [id])
+  verifiedBy    PlatformAdmin? @relation(fields: [verifiedById], references: [id])
+
+
+  @@map("payment")
+}
+
+model PlatformAdmin {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  email        String   @unique
+  passwordHash String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  paymentsVerified Payment[]
+
+  @@map("platform_admin")
+}
+
+model Plan {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code         String   @unique
+  name         String
+  price        Float
+  durationDays Int      @default(30)
+  isActive     Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("plan")
 }

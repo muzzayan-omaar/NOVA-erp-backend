@@ -18,7 +18,9 @@ export const createSale = async (req, res) => {
     const {
       items,
       paymentMethod = "CASH",
-      discount = 0
+      discount = 0,
+      clientReferenceId = null,
+      clientCreatedAt = null,
     } = req.body;
 
     const io = req.app.get("io");
@@ -27,6 +29,23 @@ export const createSale = async (req, res) => {
       return res.status(400).json({
         message: "Cart cannot be empty"
       });
+    }
+
+    // Idempotency check — if this exact client-generated sale was already
+    // created (e.g. an offline queue retrying after the original request's
+    // response got lost), return the existing sale instead of duplicating it.
+    if (clientReferenceId) {
+      const existing = await prisma.sale.findFirst({
+        where: {
+          companyId: req.context.companyId,
+          clientReferenceId,
+        },
+        include: { saleItems: true },
+      });
+
+      if (existing) {
+        return res.status(200).json(existing);
+      }
     }
 
     const productIds = items.map((item) => item.productId);
@@ -81,6 +100,8 @@ export const createSale = async (req, res) => {
           vatAmount,
           discount: Number(discount),
           paymentMethod,
+          clientReferenceId,
+          clientCreatedAt: clientCreatedAt ? new Date(clientCreatedAt) : null,
           fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
           qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`
         }
@@ -147,14 +168,16 @@ export const createSale = async (req, res) => {
         vatAmount,
         subtotal,
         itemCount: items.length,
-        paymentMethod,
-      },
+        clientCreatedAt,
+        syncedLate: clientCreatedAt
+          ? (new Date() - new Date(clientCreatedAt)) > 60000
+          : false,
+      }
     });
 
-    // Notifications (after sale + stock update succeed)
+    // Only check for low stock — the receipt itself already confirms
+    // the sale happened, no need for a redundant notification per sale.
     try {
-      
-
       await generateLowStockNotifications(req.context.companyId);
     } catch (notifyErr) {
       console.error("Notification error:", notifyErr);
@@ -169,11 +192,8 @@ export const createSale = async (req, res) => {
 
     res.status(201).json(sale);
   } catch (error) {
-    console.error("SALE ERROR:", error);
-
-    res.status(500).json({
-      message: "Failed to complete sale"
-    });
+    console.error("CREATE SALE ERROR:", error);
+    res.status(500).json({ message: "Failed to create sale" });
   }
 };
 

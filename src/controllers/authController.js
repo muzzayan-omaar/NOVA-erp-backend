@@ -1,8 +1,7 @@
-
 import bcrypt from "bcryptjs";
 import prisma from "../lib/prisma.js";
 import generateToken from "../utils/generateToken.js";
-
+import { createTrialSubscription } from "../services/subscriptionService.js";
 import { createNotification } from "../modules/notifications/notification.service.js";
 
 const sanitizeUser = (user) => {
@@ -36,6 +35,9 @@ export const registerStoreOwner = async (req, res) => {
     const company = await prisma.company.create({
       data: { name: companyName, phone, country },
     });
+
+    // Create trial subscription right after company is created
+    await createTrialSubscription(company.id);
 
     const existingUser = await prisma.user.findUnique({
       where: {
@@ -105,6 +107,13 @@ export const loginUser = async (req, res) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    // Suspended company → block login
+    if (!user.company.isActive) {
+      return res.status(403).json({
+        message: "This account has been suspended. Contact support.",
+      });
+    }
+
     const validPassword = await bcrypt.compare(password, user.passwordHash);
 
     if (!validPassword) {
@@ -124,43 +133,35 @@ export const loginUser = async (req, res) => {
 };
 
 export const getCurrentUser = async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: {
+        id: req.user.id,
+      },
+      include: {
+        company: true,
+        store: true,
+      },
+    });
 
-    try {
-
-        const user = await prisma.user.findUnique({
-
-            where: {
-                id: req.user.id
-            },
-
-            include: {
-
-                company: true,
-
-                store: true
-
-            }
-
-        });
-
-        if (!user) {
-
-            return res.status(404).json({
-                message: "User not found"
-            });
-
-        }
-
-        res.json(user);
-
-    } catch (error) {
-
-        console.error(error);
-
-        res.status(500).json({
-            message: "Server Error"
-        });
-
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
     }
 
+    // Optional: also block here if company was suspended while token is still valid
+    if (!user.company.isActive) {
+      return res.status(403).json({
+        message: "This account has been suspended. Contact support.",
+      });
+    }
+
+    res.json(user);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      message: "Server Error",
+    });
+  }
 };

@@ -18,6 +18,10 @@ import reportsRoutes from "./routes/reportsRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
 import expenseRoutes from "./routes/expenseRoutes.js";
 import stockCountRoutes from "./routes/stockCountRoutes.js";
+import subscriptionRoutes from "./routes/subscriptionRoutes.js";
+import platformRoutes from "./routes/platformRoutes.js";
+import platformAuthRoutes from "./routes/platformAuthRoutes.js";
+import planRoutes from "./routes/planRoutes.js";
 
 import notificationRoutes from "./modules/notifications/notification.routes.js";
 
@@ -57,6 +61,10 @@ app.use("/api/reports", reportsRoutes);
 app.use("/api/audit", auditRoutes);
 app.use("/api/expenses", expenseRoutes);
 app.use("/api/stock-counts", stockCountRoutes);
+app.use("/api/subscription", subscriptionRoutes);
+app.use("/api/platform/auth", platformAuthRoutes);
+app.use("/api/platform", platformRoutes);
+app.use("/api/plans", planRoutes);
 app.use(
     "/api/notifications",
     notificationRoutes
