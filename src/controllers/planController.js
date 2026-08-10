@@ -1,4 +1,5 @@
 import prisma from "../lib/prisma.js";
+import createPlatformAuditLog from "../services/platformAuditService.js";
 
 // GET /api/plans — tenant-facing, active plans only (used by the renewal screens)
 export const getActivePlans = async (req, res) => {
@@ -44,6 +45,14 @@ export const createPlan = async (req, res) => {
       },
     });
 
+    await createPlatformAuditLog({
+      platformAdminId: req.platformAdmin.id,
+      action: "PLAN_CREATED",
+      entityType: "plan",
+      entityId: plan.id,
+      metadata: { code: plan.code, price: plan.price },
+    });
+
     res.status(201).json(plan);
   } catch (err) {
     if (err.code === "P2002") {
@@ -72,6 +81,14 @@ export const updatePlan = async (req, res) => {
       },
     });
 
+    await createPlatformAuditLog({
+      platformAdminId: req.platformAdmin.id,
+      action: "PLAN_UPDATED",
+      entityType: "plan",
+      entityId: plan.id,
+      metadata: { code: plan.code, newPrice: plan.price },
+    });
+
     res.json(plan);
   } catch (err) {
     console.error(err);
@@ -88,6 +105,14 @@ export const setPlanStatus = async (req, res) => {
     const plan = await prisma.plan.update({
       where: { id },
       data: { isActive: Boolean(isActive) },
+    });
+
+    await createPlatformAuditLog({
+      platformAdminId: req.platformAdmin.id,
+      action: plan.isActive ? "PLAN_REACTIVATED" : "PLAN_RETIRED",
+      entityType: "plan",
+      entityId: plan.id,
+      metadata: { code: plan.code },
     });
 
     res.json(plan);

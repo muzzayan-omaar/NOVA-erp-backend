@@ -22,6 +22,7 @@ import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import platformRoutes from "./routes/platformRoutes.js";
 import platformAuthRoutes from "./routes/platformAuthRoutes.js";
 import planRoutes from "./routes/planRoutes.js";
+import supportRoutes from "./routes/supportRoutes.js";
 
 import notificationRoutes from "./modules/notifications/notification.routes.js";
 
@@ -65,6 +66,7 @@ app.use("/api/subscription", subscriptionRoutes);
 app.use("/api/platform/auth", platformAuthRoutes);
 app.use("/api/platform", platformRoutes);
 app.use("/api/plans", planRoutes);
+app.use("/api/support", supportRoutes);
 app.use(
     "/api/notifications",
     notificationRoutes

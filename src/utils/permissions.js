@@ -13,7 +13,8 @@ GENERAL_MANAGER:[
 "payments",
 "customers",
 "suppliers",
-"audit"
+"audit",
+"support"
 ],
 
 
