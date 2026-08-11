@@ -23,7 +23,7 @@ export const getPendingPayments = async (req, res) => {
 export const verifyPayment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { approve, plan } = req.body;
+    const { approve, packageCode, billingCycleCode } = req.body;
 
     const payment = await prisma.payment.findUnique({ where: { id } });
     if (!payment) return res.status(404).json({ message: "Payment not found" });
@@ -45,19 +45,23 @@ export const verifyPayment = async (req, res) => {
       return res.json(rejected);
     }
 
-    const planCode = plan || "BASIC";
-    const planRecord = await prisma.plan.findUnique({ where: { code: planCode } });
+    const pkg = await prisma.package.findUnique({ where: { code: packageCode || "STARTER" } });
+    const cycle = await prisma.billingCycle.findUnique({ where: { code: billingCycleCode || "MONTHLY" } });
 
-    if (!planRecord || !planRecord.isActive) {
-      return res.status(400).json({ message: `Plan "${planCode}" is not available` });
+    if (!pkg || !pkg.isActive) {
+      return res.status(400).json({ message: `Package "${packageCode}" is not available` });
+    }
+    if (!cycle || !cycle.isActive) {
+      return res.status(400).json({ message: `Billing cycle "${billingCycleCode}" is not available` });
     }
 
+    const totalMonths = cycle.payMonths + cycle.bonusMonths;
     const endDate = new Date();
-    endDate.setDate(endDate.getDate() + planRecord.durationDays);
+    endDate.setMonth(endDate.getMonth() + totalMonths);
 
     await prisma.subscription.update({
       where: { id: payment.subscriptionId },
-      data: { status: "ACTIVE", plan: planRecord.code, endDate },
+      data: { status: "ACTIVE", packageId: pkg.id, endDate },
     });
 
     const verified = await prisma.payment.update({
@@ -70,7 +74,7 @@ export const verifyPayment = async (req, res) => {
       action: "PAYMENT_VERIFIED",
       entityType: "payment",
       entityId: id,
-      metadata: { companyId: payment.companyId, amount: payment.amount, plan: planRecord.code },
+      metadata: { companyId: payment.companyId, amount: payment.amount, package: pkg.code, billingCycle: cycle.code },
     });
 
     res.json(verified);
@@ -158,14 +162,11 @@ export const setCompanyStatus = async (req, res) => {
 // GET /api/platform/analytics/overview
 export const getPlatformOverview = async (req, res) => {
   try {
-    const [companies, plans] = await Promise.all([
-      prisma.company.findMany({ include: { subscription: true } }),
-      prisma.plan.findMany(),
-    ]);
-
-    const priceMap = {};
-    plans.forEach((p) => {
-      priceMap[p.code] = p.price;
+    const companies = await prisma.company.findMany({
+      include: {
+        subscription: { include: { package: true } },
+        bundles: { include: { bundle: true } },
+      },
     });
 
     const totalCompanies = companies.length;
@@ -190,15 +191,16 @@ export const getPlatformOverview = async (req, res) => {
         return;
       }
 
-      subscriptionBreakdown[sub.status] =
-        (subscriptionBreakdown[sub.status] || 0) + 1;
+      subscriptionBreakdown[sub.status] = (subscriptionBreakdown[sub.status] || 0) + 1;
 
       if (sub.status === "ACTIVE") {
-        estimatedMRR += priceMap[sub.plan] || 0;
+        const packagePrice = sub.package?.price || 0;
+        const bundlesPrice = c.bundles.reduce((sum, cb) => sum + cb.bundle.price, 0);
+        estimatedMRR += packagePrice + bundlesPrice;
       }
 
       if (sub.status === "EXPIRED") {
-        if (sub.plan === "TRIAL") trialChurn++;
+        if (!sub.packageId) trialChurn++;
         else paidChurn++;
       }
     });
@@ -219,14 +221,7 @@ export const getPlatformOverview = async (req, res) => {
       .map(([month, count]) => ({ month, count }))
       .sort((a, b) => a.month.localeCompare(b.month));
 
-    res.json({
-      totalCompanies,
-      subscriptionBreakdown,
-      estimatedMRR,
-      signupsByMonth,
-      paidChurn,
-      trialChurn,
-    });
+    res.json({ totalCompanies, subscriptionBreakdown, estimatedMRR, signupsByMonth, paidChurn, trialChurn });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to fetch analytics" });
@@ -502,5 +497,42 @@ export const setThreadStatus = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to update thread status" });
+  }
+};
+
+// PATCH /api/platform/companies/:id/business-code
+export const updateBusinessCode = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { businessCode } = req.body;
+
+    if (!businessCode || businessCode.trim().length < 3) {
+      return res.status(400).json({ message: "Business code must be at least 3 characters" });
+    }
+
+    const clean = businessCode.trim().toUpperCase().replace(/\s+/g, "");
+
+    const existing = await prisma.company.findUnique({ where: { businessCode: clean } });
+    if (existing && existing.id !== id) {
+      return res.status(400).json({ message: "That business code is already taken" });
+    }
+
+    const company = await prisma.company.update({
+      where: { id },
+      data: { businessCode: clean },
+    });
+
+    await createPlatformAuditLog({
+      platformAdminId: req.platformAdmin.id,
+      action: "BUSINESS_CODE_UPDATED",
+      entityType: "company",
+      entityId: id,
+      metadata: { businessCode: clean },
+    });
+
+    res.json(company);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to update business code" });
   }
 };

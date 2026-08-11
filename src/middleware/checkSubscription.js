@@ -2,7 +2,7 @@ import { getSubscriptionStatus } from "../services/subscriptionService.js";
 
 // Paths a company must still be able to reach even with a lapsed
 // subscription — checking status and paying for renewal, mainly.
-const ALLOWLIST_PREFIXES = ["/api/subscription", "/api/auth",  "/api/plans"];
+const ALLOWLIST_PREFIXES = ["/api/subscription", "/api/auth",  "/api/catalog"];
 
 export default async function checkSubscription(req, res, next) {
   if (ALLOWLIST_PREFIXES.some((p) => req.originalUrl.startsWith(p))) {

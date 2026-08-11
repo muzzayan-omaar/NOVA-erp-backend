@@ -15,8 +15,22 @@ import {
   getThreadDetailPlatform,
   replyToThreadAsPlatform,
   setThreadStatus,
+  updateBusinessCode,
 } from "../controllers/platformController.js";
-import { getAllPlans, createPlan, updatePlan, setPlanStatus } from "../controllers/planController.js";
+import {
+  getAllBundles,
+  createBundle,
+  updateBundle,
+  setBundleStatus,
+  getAllPackages,
+  createPackage,
+  updatePackage,
+  setPackageStatus,
+  getAllBillingCycles,
+  createBillingCycle,
+  updateBillingCycle,
+  setBillingCycleStatus,
+} from "../controllers/catalogController.js";
 
 const router = express.Router();
 
@@ -28,15 +42,26 @@ router.post("/payments/:id/verify", verifyPayment);
 router.get("/companies", getCompanies);
 router.get("/companies/:id", getCompanyDetail);
 router.patch("/companies/:id/status", setCompanyStatus);
+router.patch("/companies/:id/business-code", updateBusinessCode);
 router.post("/companies/:id/investigate", startInvestigation);
 
 router.get("/analytics/overview", getPlatformOverview);
 router.get("/payments", getAllPayments);
 
-router.get("/plans", getAllPlans);
-router.post("/plans", createPlan);
-router.patch("/plans/:id", updatePlan);
-router.patch("/plans/:id/status", setPlanStatus);
+router.get("/bundles", getAllBundles);
+router.post("/bundles", createBundle);
+router.patch("/bundles/:id", updateBundle);
+router.patch("/bundles/:id/status", setBundleStatus);
+
+router.get("/packages", getAllPackages);
+router.post("/packages", createPackage);
+router.patch("/packages/:id", updatePackage);
+router.patch("/packages/:id/status", setPackageStatus);
+
+router.get("/billing-cycles", getAllBillingCycles);
+router.post("/billing-cycles", createBillingCycle);
+router.patch("/billing-cycles/:id", updateBillingCycle);
+router.patch("/billing-cycles/:id/status", setBillingCycleStatus);
 
 router.post("/broadcast", createBroadcast);
 router.get("/audit-log", getPlatformAuditLog);

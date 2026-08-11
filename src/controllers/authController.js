@@ -3,6 +3,7 @@ import prisma from "../lib/prisma.js";
 import generateToken from "../utils/generateToken.js";
 import { createTrialSubscription } from "../services/subscriptionService.js";
 import { createNotification } from "../modules/notifications/notification.service.js";
+import { generateUniqueBusinessCode } from "../utils/generateBusinessCode.js";
 
 const sanitizeUser = (user) => {
   const { passwordHash, ...safe } = user;
@@ -32,8 +33,10 @@ export const registerStoreOwner = async (req, res) => {
     // with the same name (best-effort duplicate guard at signup time).
     const passwordHash = await bcrypt.hash(password, 10);
 
+    const businessCode = await generateUniqueBusinessCode(prisma, companyName);
+
     const company = await prisma.company.create({
-      data: { name: companyName, phone, country },
+      data: { name: companyName, phone, country, businessCode },
     });
 
     // Create trial subscription right after company is created
@@ -92,26 +95,31 @@ export const registerStoreOwner = async (req, res) => {
  */
 export const loginUser = async (req, res) => {
   try {
-    const { email, password, companyId } = req.body;
+    const { businessCode, email, password } = req.body;
 
-    if (!companyId) {
-      return res.status(400).json({ message: "Company is required for login" });
+    if (!businessCode) {
+      return res.status(400).json({ message: "Business code is required for login" });
+    }
+
+    const company = await prisma.company.findUnique({
+      where: { businessCode: businessCode.trim().toUpperCase() },
+    });
+
+    if (!company) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    if (!company.isActive) {
+      return res.status(403).json({ message: "This account has been suspended. Contact support." });
     }
 
     const user = await prisma.user.findUnique({
-      where: { companyId_email: { companyId, email } },
+      where: { companyId_email: { companyId: company.id, email } },
       include: { company: true, store: true },
     });
 
     if (!user || !user.isActive) {
       return res.status(401).json({ message: "Invalid credentials" });
-    }
-
-    // Suspended company → block login
-    if (!user.company.isActive) {
-      return res.status(403).json({
-        message: "This account has been suspended. Contact support.",
-      });
     }
 
     const validPassword = await bcrypt.compare(password, user.passwordHash);
@@ -122,10 +130,7 @@ export const loginUser = async (req, res) => {
 
     const token = generateToken(user);
 
-    res.json({
-      token,
-      user: sanitizeUser(user),
-    });
+    res.json({ token, user: sanitizeUser(user) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server Error" });
