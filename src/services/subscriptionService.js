@@ -19,6 +19,7 @@ export const createTrialSubscription = async (companyId) => {
 export const getSubscriptionStatus = async (companyId) => {
   const subscription = await prisma.subscription.findUnique({
     where: { companyId },
+    include: { package: true },
   });
 
   if (!subscription) {

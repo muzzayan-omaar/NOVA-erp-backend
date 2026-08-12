@@ -3,6 +3,7 @@ import {
   registerStoreOwner,
   loginUser,
   getCurrentUser,
+  changePassword,
 } from "../controllers/authController.js";
 
 import protect from "../middleware/protect.js";
@@ -21,5 +22,5 @@ router.get(
     protect,
     getCurrentUser
 );
-
+router.post("/change-password", protect, changePassword);
 export default router;

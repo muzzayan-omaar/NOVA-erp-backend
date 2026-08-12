@@ -90,6 +90,7 @@ model User {
   notifications  Notification[]
   supportMessages SupportMessage[]
   isPlatformAdmin   Boolean   @default(false)
+  mustChangePassword Boolean @default(false)
   paymentsSubmitted Payment[] @relation("PaymentSubmittedBy")
   activeStore    Store?              @relation("ActiveStore", fields: [activeStoreId], references: [id])
   company        Company             @relation(fields: [companyId], references: [id])
@@ -100,7 +101,7 @@ model User {
   expensesCreated Expense[] @relation("ExpenseCreatedBy")
 
   stockCountsCreated StockCount[] @relation("StockCountCreatedBy")
-
+  
   @@unique([companyId, email])
   @@map("user")
 }
@@ -445,11 +446,12 @@ model Payment {
   id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   companyId       String            @db.Uuid
   subscriptionId  String            @db.Uuid
+  submittedById String? @db.Uuid
   amount          Float
   method          PaymentMethodType
   referenceNumber String
   status          PaymentStatus     @default(PENDING_VERIFICATION)
-  submittedById   String            @db.Uuid
+  
   verifiedById    String?           @db.Uuid
   verifiedAt      DateTime?
   notes           String?
@@ -458,7 +460,7 @@ model Payment {
   
    company       Company        @relation(fields: [companyId], references: [id])
   subscription  Subscription   @relation(fields: [subscriptionId], references: [id])
-  submittedBy   User           @relation("PaymentSubmittedBy", fields: [submittedById], references: [id])
+  submittedBy User? @relation("PaymentSubmittedBy", fields: [submittedById], references: [id])
   verifiedBy    PlatformAdmin? @relation(fields: [verifiedById], references: [id])
 
 

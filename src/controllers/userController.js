@@ -1,118 +1,91 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { assertUserCapacity } from "../utils/checkCapacityLimits.js";
 
 const prisma = new PrismaClient();
 
-export const getUsers = async (req,res)=>{
- try {
-
-  const users = await prisma.user.findMany({
-    where:{
-      companyId:req.context.companyId
-    },
-    select:{
-      id:true,
-      name:true,
-      email:true,
-      role:true,
-      storeId:true,
-      activeStoreId:true,
-      isActive:true,
-      store:{
-        select:{
-          id:true,
-          name:true
-        }
+export const getUsers = async (req, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      where: {
+        companyId: req.context.companyId,
       },
-      createdAt:true
-    }
-  });
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        storeId: true,
+        activeStoreId: true,
+        isActive: true,
+        store: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        createdAt: true,
+      },
+    });
 
+    res.json(users);
+  } catch (err) {
+    console.error(err);
 
-  res.json(users);
-
- } catch(err){
-
-  console.error(err);
-
-  res.status(500).json({
-    message:"Failed to fetch users"
-  });
-
- }
+    res.status(500).json({
+      message: "Failed to fetch users",
+    });
+  }
 };
 
-export const createUser = async(req,res)=>{
+export const createUser = async (req, res) => {
+  try {
+    const companyId = req.context.companyId;
 
-try{
+    const capacity = await assertUserCapacity(companyId);
+    if (!capacity.ok) {
+      return res.status(400).json({ message: capacity.message });
+    }
 
-const {
- name,
- email,
- password,
- role,
- storeId
-}=req.body;
+    const { name, email, password, role, storeId } = req.body;
 
+    const existing = await prisma.user.findUnique({
+      where: {
+        companyId_email: {
+          companyId,
+          email,
+        },
+      },
+    });
 
-const existing = await prisma.user.findUnique({
- where:{
-   companyId_email:{
-     companyId:req.context.companyId,
-     email
-   }
- }
-});
+    if (existing) {
+      return res.status(400).json({
+        message: "User already exists",
+      });
+    }
 
+    const passwordHash = await bcrypt.hash(password, 10);
 
-if(existing){
- return res.status(400).json({
-  message:"User already exists"
- });
-}
+    const user = await prisma.user.create({
+      data: {
+        companyId,
+        name,
+        email,
+        passwordHash,
+        role,
+        storeId,
+        activeStoreId: storeId,
+      },
+    });
 
+    res.status(201).json(user);
+  } catch (err) {
+    console.error(err);
 
-const passwordHash = await bcrypt.hash(password,10);
-
-
-
-const user = await prisma.user.create({
-
-data:{
-
- companyId:req.context.companyId,
-
- name,
-
- email,
-
- passwordHash,
-
- role,
-
- storeId,
-
- activeStoreId:storeId
-
-}
-
-});
-
-
-res.status(201).json(user);
-
-
-
-}catch(err){
-
-console.error(err);
-
-res.status(500).json({
-message:"Failed to create user"
-});
-
-}
-
+    res.status(500).json({
+      message: "Failed to create user",
+    });
+  }
 };
 
 export const updateUser = async (req, res) => {

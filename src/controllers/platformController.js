@@ -3,6 +3,10 @@ import jwt from "jsonwebtoken";
 import createPlatformAuditLog from "../services/platformAuditService.js";
 import { createNotification } from "../modules/notifications/notification.service.js";
 
+import bcrypt from "bcryptjs";
+import { generateUniqueBusinessCode } from "../utils/generateBusinessCode.js";
+import { generateTempPassword } from "../utils/generateTempPassword.js";
+
 export const getPendingPayments = async (req, res) => {
   try {
     const payments = await prisma.payment.findMany({
@@ -109,7 +113,10 @@ export const getCompanyDetail = async (req, res) => {
     const company = await prisma.company.findUnique({
       where: { id },
       include: {
-        subscription: true,
+        subscription: {
+          include: { package: { include: { bundles: { include: { bundle: true } } } } },
+        },
+        bundles: { include: { bundle: true } },
         stores: true,
         users: {
           select: { id: true, name: true, email: true, role: true, isActive: true, createdAt: true },
@@ -534,5 +541,228 @@ export const updateBusinessCode = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to update business code" });
+  }
+};
+
+// POST /api/platform/companies
+// The actual onboarding tool — creates everything in one transaction and
+// returns the one-time handoff details. Nothing here is ever re-fetchable.
+export const createCompanyOnboarding = async (req, res) => {
+  try {
+    const {
+      companyName, phone, email, country, currency,
+      packageCode, extraBundleCodes = [], billingCycleCode,
+      storeName, storeLocation,
+      gmName, gmEmail, gmPhone,
+    } = req.body;
+
+    if (!companyName || !packageCode || !billingCycleCode || !storeName || !gmName || !gmEmail) {
+      return res.status(400).json({ message: "Missing required onboarding fields" });
+    }
+
+    const pkg = await prisma.package.findUnique({ where: { code: packageCode } });
+    if (!pkg || !pkg.isActive) {
+      return res.status(400).json({ message: `Package "${packageCode}" is not available` });
+    }
+
+    const cycle = await prisma.billingCycle.findUnique({ where: { code: billingCycleCode } });
+    if (!cycle || !cycle.isActive) {
+      return res.status(400).json({ message: `Billing cycle "${billingCycleCode}" is not available` });
+    }
+
+    const extraBundles = await prisma.bundle.findMany({
+      where: { code: { in: extraBundleCodes }, isActive: true },
+    });
+
+    if (extraBundles.length !== extraBundleCodes.length) {
+      return res.status(400).json({ message: "One or more selected bundles are not available" });
+    }
+
+    const existingEmail = await prisma.user.findFirst({ where: { email: gmEmail } });
+    // Note: uniqueness is enforced per-company (companyId+email), so this is
+    // just an early friendly check, not the source of truth.
+
+    const businessCode = await generateUniqueBusinessCode(prisma, companyName);
+    const tempPassword = generateTempPassword();
+    const passwordHash = await bcrypt.hash(tempPassword, 10);
+
+    const monthlyTotal = pkg.price + extraBundles.reduce((sum, b) => sum + b.price, 0);
+    const chargeAmount = monthlyTotal * cycle.payMonths;
+    const totalMonths = cycle.payMonths + cycle.bonusMonths;
+
+    const endDate = new Date();
+    endDate.setMonth(endDate.getMonth() + totalMonths);
+
+    const result = await prisma.$transaction(async (tx) => {
+      const company = await tx.company.create({
+        data: { name: companyName, phone, email, country, currency: currency || "UGX", businessCode },
+      });
+
+      const store = await tx.store.create({
+        data: {
+          companyId: company.id,
+          name: storeName,
+          location: storeLocation,
+          isHeadOffice: true,
+        },
+      });
+
+      const gm = await tx.user.create({
+        data: {
+          companyId: company.id,
+          storeId: store.id,
+          activeStoreId: store.id,
+          name: gmName,
+          email: gmEmail,
+          passwordHash,
+          role: "GENERAL_MANAGER",
+          mustChangePassword: true,
+        },
+      });
+
+      const subscription = await tx.subscription.create({
+        data: {
+          companyId: company.id,
+          packageId: pkg.id,
+          status: "ACTIVE",
+          startDate: new Date(),
+          endDate,
+        },
+      });
+
+      if (extraBundles.length > 0) {
+        await tx.companyBundle.createMany({
+          data: extraBundles.map((b) => ({ companyId: company.id, bundleId: b.id })),
+        });
+      }
+
+      const payment = await tx.payment.create({
+        data: {
+          companyId: company.id,
+          subscriptionId: subscription.id,
+          amount: chargeAmount,
+          method: "CASH",
+          referenceNumber: `ONBOARD-${businessCode}`,
+          status: "VERIFIED",
+          submittedById: null,
+          verifiedById: req.platformAdmin.id,
+          verifiedAt: new Date(),
+          notes: "Collected during onboarding",
+        },
+      });
+
+      return { company, store, gm, subscription, payment };
+    });
+
+    await createPlatformAuditLog({
+      platformAdminId: req.platformAdmin.id,
+      action: "COMPANY_ONBOARDED",
+      entityType: "company",
+      entityId: result.company.id,
+      metadata: {
+        companyName,
+        businessCode,
+        packageCode,
+        extraBundleCodes,
+        billingCycleCode,
+        chargeAmount,
+      },
+    });
+
+    res.status(201).json({
+      businessCode,
+      gmName,
+      gmEmail,
+      tempPassword,
+      companyId: result.company.id,
+      chargeAmount,
+      coverageEndDate: endDate,
+    });
+  } catch (err) {
+    if (err.code === "P2002") {
+      return res.status(400).json({ message: "A user with that email already exists in this company" });
+    }
+    console.error(err);
+    res.status(500).json({ message: "Failed to onboard company" });
+  }
+};
+// POST /api/platform/companies/:id/bundles
+// The "MBS calls back wanting Payroll" flow — deterministic pricing,
+// same rep-collected-payment pattern as onboarding.
+export const addBundlesToCompany = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { bundleCodes, method, notes } = req.body;
+
+    if (!Array.isArray(bundleCodes) || bundleCodes.length === 0) {
+      return res.status(400).json({ message: "Select at least one bundle" });
+    }
+
+    const company = await prisma.company.findUnique({
+      where: { id },
+      include: { subscription: true },
+    });
+    if (!company) return res.status(404).json({ message: "Company not found" });
+    if (!company.subscription) {
+      return res.status(400).json({ message: "This company has no active subscription" });
+    }
+
+    const bundles = await prisma.bundle.findMany({
+      where: { code: { in: bundleCodes }, isActive: true },
+    });
+
+    if (bundles.length !== bundleCodes.length) {
+      return res.status(400).json({ message: "One or more selected bundles are not available" });
+    }
+
+    const existing = await prisma.companyBundle.findMany({
+      where: { companyId: id, bundleId: { in: bundles.map((b) => b.id) } },
+    });
+    const existingBundleIds = new Set(existing.map((e) => e.bundleId));
+    const newBundles = bundles.filter((b) => !existingBundleIds.has(b.id));
+
+    if (newBundles.length === 0) {
+      return res.status(400).json({ message: "This company already has every bundle selected" });
+    }
+
+    const amount = newBundles.reduce((sum, b) => sum + b.price, 0);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.companyBundle.createMany({
+        data: newBundles.map((b) => ({ companyId: id, bundleId: b.id })),
+      });
+
+      await tx.payment.create({
+        data: {
+          companyId: id,
+          subscriptionId: company.subscription.id,
+          amount,
+          method: method || "CASH",
+          referenceNumber: `ADDON-${Date.now()}`,
+          status: "VERIFIED",
+          submittedById: null,
+          verifiedById: req.platformAdmin.id,
+          verifiedAt: new Date(),
+          notes: notes || `Add-on bundles: ${newBundles.map((b) => b.code).join(", ")}`,
+        },
+      });
+    });
+
+    await createPlatformAuditLog({
+      platformAdminId: req.platformAdmin.id,
+      action: "ADD_ON_BUNDLE_SOLD",
+      entityType: "company",
+      entityId: id,
+      metadata: { bundleCodes: newBundles.map((b) => b.code), amount },
+    });
+
+    res.status(201).json({
+      message: "Bundles added",
+      addedBundles: newBundles.map((b) => b.code),
+      amount,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to add bundles" });
   }
 };

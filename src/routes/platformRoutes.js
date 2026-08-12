@@ -16,6 +16,8 @@ import {
   replyToThreadAsPlatform,
   setThreadStatus,
   updateBusinessCode,
+  createCompanyOnboarding,
+  addBundlesToCompany,
 } from "../controllers/platformController.js";
 import {
   getAllBundles,
@@ -70,5 +72,7 @@ router.get("/support/threads", getAllThreads);
 router.get("/support/threads/:id", getThreadDetailPlatform);
 router.post("/support/threads/:id/reply", replyToThreadAsPlatform);
 router.patch("/support/threads/:id/status", setThreadStatus);
+router.post("/companies", createCompanyOnboarding);
+router.post("/companies/:id/bundles", addBundlesToCompany);
 
 export default router;

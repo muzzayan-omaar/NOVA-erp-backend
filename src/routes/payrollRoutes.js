@@ -6,6 +6,7 @@ createPayroll,
 getPayroll
 } from "../controllers/payrollController.js";
 import checkPermission from "../middleware/checkPermission.js";
+import checkFeatureAccess from "../middleware/checkFeatureAccess.js";
 
 
 const router = express.Router();
@@ -17,6 +18,7 @@ router.get(
 "/",
 protect,
 checkPermission("payroll"),
+checkFeatureAccess("payroll"),
 getPayroll
 );
 
