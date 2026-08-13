@@ -33,6 +33,9 @@ import {
   updateBillingCycle,
   setBillingCycleStatus,
 } from "../controllers/catalogController.js";
+import { validate } from "../middleware/validate.js";
+import { onboardingSchema } from "../schemas/platformSchemas.js";
+
 
 const router = express.Router();
 
@@ -72,7 +75,7 @@ router.get("/support/threads", getAllThreads);
 router.get("/support/threads/:id", getThreadDetailPlatform);
 router.post("/support/threads/:id/reply", replyToThreadAsPlatform);
 router.patch("/support/threads/:id/status", setThreadStatus);
-router.post("/companies", createCompanyOnboarding);
+router.post("/companies", validate(onboardingSchema), createCompanyOnboarding);
 router.post("/companies/:id/bundles", addBundlesToCompany);
 
 export default router;

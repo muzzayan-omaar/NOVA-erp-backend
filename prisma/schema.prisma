@@ -17,6 +17,7 @@ model Company {
   timezone           String?
   logo               String?
   businessCode String? @unique
+  termsAcceptedAt DateTime?
   isActive           Boolean             @default(true)
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt

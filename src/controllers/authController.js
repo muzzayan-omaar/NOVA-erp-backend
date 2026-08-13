@@ -28,18 +28,14 @@ export const registerStoreOwner = async (req, res) => {
       });
     }
 
-    // Company must exist first before we can check companyId+email uniqueness,
-    // so instead check if this email is already used anywhere under a company
-    // with the same name (best-effort duplicate guard at signup time).
     const passwordHash = await bcrypt.hash(password, 10);
 
     const businessCode = await generateUniqueBusinessCode(prisma, companyName);
 
     const company = await prisma.company.create({
-      data: { name: companyName, phone, country, businessCode },
+      data: { name: companyName, phone, country, businessCode, termsAcceptedAt: new Date() },
     });
 
-    // Create trial subscription right after company is created
     await createTrialSubscription(company.id);
 
     const existingUser = await prisma.user.findUnique({
@@ -110,7 +106,9 @@ export const loginUser = async (req, res) => {
     }
 
     if (!company.isActive) {
-      return res.status(403).json({ message: "This account has been suspended. Contact support." });
+      return res.status(403).json({
+        message: "This account has been suspended. Contact support.",
+      });
     }
 
     const user = await prisma.user.findUnique({
@@ -125,6 +123,30 @@ export const loginUser = async (req, res) => {
     const validPassword = await bcrypt.compare(password, user.passwordHash);
 
     if (!validPassword) {
+      const gms = await prisma.user.findMany({
+        where: {
+          companyId: user.companyId,
+          role: "GENERAL_MANAGER",
+          isActive: true,
+        },
+        select: { id: true },
+      });
+
+      await Promise.all(
+        gms.map((gm) =>
+          createNotification({
+            companyId: user.companyId,
+            storeId: null,
+            userId: gm.id,
+            title: "Failed Login Attempt",
+            message: `A failed login attempt was made for ${user.email}.`,
+            type: "FAILED_LOGIN",
+            priority: "MEDIUM",
+            uniqueKey: `FAILED_LOGIN_${user.id}_${new Date().toISOString().slice(0, 13)}`,
+          })
+        )
+      ).catch(() => {});
+
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
@@ -155,7 +177,6 @@ export const getCurrentUser = async (req, res) => {
       });
     }
 
-    // Optional: also block here if company was suspended while token is still valid
     if (!user.company.isActive) {
       return res.status(403).json({
         message: "This account has been suspended. Contact support.",
@@ -170,23 +191,31 @@ export const getCurrentUser = async (req, res) => {
     });
   }
 };
+
 export const changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     const { userId } = req.context;
 
     if (!currentPassword || !newPassword) {
-      return res.status(400).json({ message: "Current and new password are required" });
+      return res.status(400).json({
+        message: "Current and new password are required",
+      });
     }
 
     if (newPassword.length < 8) {
-      return res.status(400).json({ message: "New password must be at least 8 characters" });
+      return res.status(400).json({
+        message: "New password must be at least 8 characters",
+      });
     }
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    const validPassword = await bcrypt.compare(currentPassword, user.passwordHash);
+    const validPassword = await bcrypt.compare(
+      currentPassword,
+      user.passwordHash
+    );
     if (!validPassword) {
       return res.status(401).json({ message: "Current password is incorrect" });
     }

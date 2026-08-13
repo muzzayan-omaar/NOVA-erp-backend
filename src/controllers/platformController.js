@@ -595,7 +595,7 @@ export const createCompanyOnboarding = async (req, res) => {
 
     const result = await prisma.$transaction(async (tx) => {
       const company = await tx.company.create({
-        data: { name: companyName, phone, email, country, currency: currency || "UGX", businessCode },
+        data: { name: companyName, phone, email, country, currency: currency || "UGX", businessCode, termsAcceptedAt: new Date() },
       });
 
       const store = await tx.store.create({
@@ -654,7 +654,7 @@ export const createCompanyOnboarding = async (req, res) => {
       return { company, store, gm, subscription, payment };
     });
 
-    await createPlatformAuditLog({
+        await createPlatformAuditLog({
       platformAdminId: req.platformAdmin.id,
       action: "COMPANY_ONBOARDED",
       entityType: "company",
@@ -666,6 +666,7 @@ export const createCompanyOnboarding = async (req, res) => {
         extraBundleCodes,
         billingCycleCode,
         chargeAmount,
+        repConfirmed: true,
       },
     });
 
