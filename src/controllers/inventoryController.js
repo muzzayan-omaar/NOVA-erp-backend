@@ -153,6 +153,7 @@ export const transferStock = async (req, res) => {
       return res.status(404).json({ message: "Product not found in current store" });
     }
 
+    // ── RELOCATE ──────────────────────────────────────────────────────
     if (mode === "RELOCATE") {
       const movedQuantity = source.stockQuantity || 0;
 
@@ -164,19 +165,29 @@ export const transferStock = async (req, res) => {
 
         await tx.inventoryMovement.create({
           data: {
-            companyId, storeId: sourceStoreId, productId: source.id,
-            createdById: userId, type: "TRANSFER_OUT", quantity: movedQuantity,
+            companyId,
+            storeId: sourceStoreId,
+            productId: source.id,
+            createdById: userId,
+            type: "TRANSFER_OUT",
+            quantity: movedQuantity,
             reason: reason || `Relocated to ${targetStore.name}`,
-            sourceStoreId, targetStoreId,
+            sourceStoreId,
+            targetStoreId,
           },
         });
 
         await tx.inventoryMovement.create({
           data: {
-            companyId, storeId: targetStoreId, productId: source.id,
-            createdById: userId, type: "TRANSFER_IN", quantity: movedQuantity,
+            companyId,
+            storeId: targetStoreId,
+            productId: source.id,
+            createdById: userId,
+            type: "TRANSFER_IN",
+            quantity: movedQuantity,
             reason: reason || `Relocated from source store`,
-            sourceStoreId, targetStoreId,
+            sourceStoreId,
+            targetStoreId,
           },
         });
 
@@ -184,16 +195,24 @@ export const transferStock = async (req, res) => {
       });
 
       await createAuditLog({
-        userId, companyId, storeId: sourceStoreId,
+        userId,
+        companyId,
+        storeId: sourceStoreId,
         action: "PRODUCT_RELOCATED",
         entityType: "product",
         entityId: source.id,
-        metadata: { productName: source.name, quantity: movedQuantity, targetStoreId, targetStoreName: targetStore.name },
+        metadata: {
+          productName: source.name,
+          quantity: movedQuantity,
+          targetStoreId,
+          targetStoreName: targetStore.name,
+        },
       });
 
       return res.json({ message: "Product relocated", product: result });
     }
 
+    // ── CLONE (improved: reads outside the transaction) ───────────────
     if (mode === "CLONE") {
       const qty = Number(quantity);
       if (!qty || qty <= 0) {
@@ -205,9 +224,33 @@ export const transferStock = async (req, res) => {
 
       const familyId = source.linkedFamilyId || source.id;
 
+      // Reads happen BEFORE opening the transaction
+      let twin = await prisma.product.findFirst({
+        where: { companyId, storeId: targetStoreId, linkedFamilyId: familyId },
+      });
+
+      let newSku = null;
+      if (!twin) {
+        const storeSuffix = targetStore.name
+          .replace(/[^a-zA-Z0-9]/g, "")
+          .slice(0, 4)
+          .toUpperCase();
+
+        newSku = `${source.sku}-${storeSuffix}`;
+        let attempt = 0;
+
+        while (await prisma.product.findFirst({ where: { companyId, sku: newSku } })) {
+          attempt += 1;
+          newSku = `${source.sku}-${storeSuffix}${attempt}`;
+        }
+      }
+
       const result = await prisma.$transaction(async (tx) => {
         if (!source.linkedFamilyId) {
-          await tx.product.update({ where: { id: source.id }, data: { linkedFamilyId: familyId } });
+          await tx.product.update({
+            where: { id: source.id },
+            data: { linkedFamilyId: familyId },
+          });
         }
 
         const updatedSource = await tx.product.update({
@@ -215,27 +258,19 @@ export const transferStock = async (req, res) => {
           data: { stockQuantity: { decrement: qty } },
         });
 
-        let twin = await tx.product.findFirst({
-          where: { companyId, storeId: targetStoreId, linkedFamilyId: familyId },
-        });
-
+        let resolvedTwin;
         if (twin) {
-          twin = await tx.product.update({
+          resolvedTwin = await tx.product.update({
             where: { id: twin.id },
             data: { stockQuantity: { increment: qty } },
           });
         } else {
-          let sku = `${source.sku}-${targetStore.name.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase()}`;
-          let attempt = 0;
-          while (await tx.product.findFirst({ where: { companyId, sku } })) {
-            attempt++;
-            sku = `${source.sku}-${targetStore.name.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase()}${attempt}`;
-          }
-
-          twin = await tx.product.create({
+          resolvedTwin = await tx.product.create({
             data: {
-              companyId, storeId: targetStoreId,
-              name: source.name, sku,
+              companyId,
+              storeId: targetStoreId,
+              name: source.name,
+              sku: newSku,
               barcode: source.barcode,
               buyingPrice: source.buyingPrice,
               sellingPrice: source.sellingPrice,
@@ -248,33 +283,47 @@ export const transferStock = async (req, res) => {
 
         await tx.inventoryMovement.create({
           data: {
-            companyId, storeId: sourceStoreId, productId: source.id,
-            createdById: userId, type: "TRANSFER_OUT", quantity: qty,
+            companyId,
+            storeId: sourceStoreId,
+            productId: source.id,
+            createdById: userId,
+            type: "TRANSFER_OUT",
+            quantity: qty,
             reason: reason || `Transferred to ${targetStore.name}`,
-            sourceStoreId, targetStoreId,
+            sourceStoreId,
+            targetStoreId,
           },
         });
 
         await tx.inventoryMovement.create({
           data: {
-            companyId, storeId: targetStoreId, productId: twin.id,
-            createdById: userId, type: "TRANSFER_IN", quantity: qty,
+            companyId,
+            storeId: targetStoreId,
+            productId: resolvedTwin.id,
+            createdById: userId,
+            type: "TRANSFER_IN",
+            quantity: qty,
             reason: reason || `Transferred from source store`,
-            sourceStoreId, targetStoreId,
+            sourceStoreId,
+            targetStoreId,
           },
         });
 
-        return { updatedSource, twin };
+        return { updatedSource, twin: resolvedTwin };
       });
 
       await createAuditLog({
-        userId, companyId, storeId: sourceStoreId,
+        userId,
+        companyId,
+        storeId: sourceStoreId,
         action: "INVENTORY_TRANSFERRED",
         entityType: "product",
         entityId: source.id,
         metadata: {
-          productName: source.name, quantity: qty,
-          targetStoreId, targetStoreName: targetStore.name,
+          productName: source.name,
+          quantity: qty,
+          targetStoreId,
+          targetStoreName: targetStore.name,
           twinProductId: result.twin.id,
         },
       });
