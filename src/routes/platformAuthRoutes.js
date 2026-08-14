@@ -7,11 +7,6 @@ import { platformLoginSchema } from "../schemas/authSchemas.js";
 
 const router = express.Router();
 
-router.post(
-  "/login",
-  authLimiter,
-  validate(platformLoginSchema),
-  loginPlatformAdmin
-);
+router.post("/login", authLimiter, validate(platformLoginSchema), loginPlatformAdmin);
 
 export default router;

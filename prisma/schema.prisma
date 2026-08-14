@@ -118,6 +118,7 @@ model Product {
   sellingPrice    Float
   stockQuantity   Float?              @default(0)
   unitType        String?             @default("pcs")
+  linkedFamilyId String? @db.Uuid
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
   isActive        Boolean             @default(true)
@@ -127,6 +128,7 @@ model Product {
   saleItems       SaleItem[]
   stockCountItems StockCountItem[]
 
+  @@index([companyId, linkedFamilyId])
   @@unique([companyId, sku])
   @@map("product")
 }
@@ -362,6 +364,8 @@ enum InventoryMovementType {
   OUT
   SALE
   ADJUSTMENT
+  TRANSFER_OUT
+  TRANSFER_IN
 }
 
 enum NotificationType {
@@ -606,3 +610,4 @@ model SupportMessage {
 
   @@map("support_message")
 }
+

@@ -1,7 +1,11 @@
 // subscriptionRoutes.js
 import express from "express";
 import protect from "../middleware/protect.js";
-import { getStatus, submitPayment, getPaymentHistory } from "../controllers/subscriptionController.js";
+import {
+  getStatus,
+  submitPayment,
+  getPaymentHistory,
+} from "../controllers/subscriptionController.js";
 
 const router = express.Router();
 

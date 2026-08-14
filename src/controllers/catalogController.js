@@ -49,21 +49,28 @@ export const getMyEntitlements = async (req, res) => {
       prisma.companyBundle.findMany({ where: { companyId }, include: { bundle: true } }),
     ]);
 
-    const packageBundleKeys = subscription?.package?.bundles.flatMap((pb) => pb.bundle.featureKeys) || [];
+    const packageBundleKeys =
+      subscription?.package?.bundles.flatMap((pb) => pb.bundle.featureKeys) || [];
     const extraBundleKeys = companyBundles.flatMap((cb) => cb.bundle.featureKeys);
 
     const BASELINE_FEATURES = [
-  "dashboard", "pos", "products", "inventory", "sales", "customers",
-  "billing", "support",
-];
+      "dashboard",
+      "pos",
+      "products",
+      "inventory",
+      "sales",
+      "customers",
+      "billing",
+      "support",
+    ];
 
-res.json({
-  package: subscription?.package || null,
-  maxStores: subscription?.package?.maxStores ?? 1,
-  maxUsers: subscription?.package?.maxUsers ?? 3,
-  extraBundles: companyBundles.map((cb) => cb.bundle),
-  featureKeys: [...new Set([...BASELINE_FEATURES, ...packageBundleKeys, ...extraBundleKeys])],
-});
+    res.json({
+      package: subscription?.package || null,
+      maxStores: subscription?.package?.maxStores ?? 1,
+      maxUsers: subscription?.package?.maxUsers ?? 3,
+      extraBundles: companyBundles.map((cb) => cb.bundle),
+      featureKeys: [...new Set([...BASELINE_FEATURES, ...packageBundleKeys, ...extraBundleKeys])],
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to fetch entitlements" });
@@ -155,7 +162,10 @@ export const setBundleStatus = async (req, res) => {
     const { id } = req.params;
     const { isActive } = req.body;
 
-    const bundle = await prisma.bundle.update({ where: { id }, data: { isActive: Boolean(isActive) } });
+    const bundle = await prisma.bundle.update({
+      where: { id },
+      data: { isActive: Boolean(isActive) },
+    });
 
     await createPlatformAuditLog({
       platformAdminId: req.platformAdmin.id,
@@ -274,7 +284,10 @@ export const setPackageStatus = async (req, res) => {
     const { id } = req.params;
     const { isActive } = req.body;
 
-    const pkg = await prisma.package.update({ where: { id }, data: { isActive: Boolean(isActive) } });
+    const pkg = await prisma.package.update({
+      where: { id },
+      data: { isActive: Boolean(isActive) },
+    });
 
     await createPlatformAuditLog({
       platformAdminId: req.platformAdmin.id,
@@ -356,7 +369,10 @@ export const setBillingCycleStatus = async (req, res) => {
     const { id } = req.params;
     const { isActive } = req.body;
 
-    const cycle = await prisma.billingCycle.update({ where: { id }, data: { isActive: Boolean(isActive) } });
+    const cycle = await prisma.billingCycle.update({
+      where: { id },
+      data: { isActive: Boolean(isActive) },
+    });
     res.json(cycle);
   } catch (err) {
     console.error(err);

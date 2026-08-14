@@ -36,7 +36,6 @@ import {
 import { validate } from "../middleware/validate.js";
 import { onboardingSchema } from "../schemas/platformSchemas.js";
 
-
 const router = express.Router();
 
 router.use(protectPlatform);

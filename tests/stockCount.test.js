@@ -30,10 +30,7 @@ describe("Stock Count", () => {
   });
 
   it("blocks a second OPEN count on the same store", async () => {
-    await request(app)
-      .post("/api/stock-counts")
-      .set(authHeader(ctx.branchManager))
-      .send({});
+    await request(app).post("/api/stock-counts").set(authHeader(ctx.branchManager)).send({});
 
     const res = await request(app)
       .post("/api/stock-counts")
@@ -128,9 +125,7 @@ describe("Stock Count", () => {
     expect(managerView.body).toHaveLength(1);
     expect(managerView.body[0].storeId).toBe(ctx.store.id);
 
-    const gmView = await request(app)
-      .get("/api/stock-counts")
-      .set(authHeader(ctx.gm));
+    const gmView = await request(app).get("/api/stock-counts").set(authHeader(ctx.gm));
 
     expect(gmView.body).toHaveLength(2); // sees both branches
   });

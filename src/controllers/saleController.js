@@ -2,13 +2,9 @@ import prisma from "../lib/prisma.js";
 import createAuditLog from "../services/auditService.js";
 import bcrypt from "bcryptjs";
 
-import {
-  createNotification
-} from "../modules/notifications/notification.service.js";
+import { createNotification } from "../modules/notifications/notification.service.js";
 
-import {
-  generateLowStockNotifications
-} from "../modules/notifications/notification.generator.js";
+import { generateLowStockNotifications } from "../modules/notifications/notification.generator.js";
 
 /**
  * CREATE SALE
@@ -27,7 +23,7 @@ export const createSale = async (req, res) => {
 
     if (!items || items.length === 0) {
       return res.status(400).json({
-        message: "Cart cannot be empty"
+        message: "Cart cannot be empty",
       });
     }
 
@@ -53,11 +49,11 @@ export const createSale = async (req, res) => {
     const products = await prisma.product.findMany({
       where: {
         id: {
-          in: productIds
+          in: productIds,
         },
         companyId: req.context.companyId,
-        storeId: req.context.storeId
-      }
+        storeId: req.context.storeId,
+      },
     });
 
     const productMap = new Map(products.map((p) => [p.id, p]));
@@ -69,13 +65,13 @@ export const createSale = async (req, res) => {
 
       if (!product) {
         return res.status(404).json({
-          message: "Product not found"
+          message: "Product not found",
         });
       }
 
       if (product.stockQuantity < item.quantity) {
         return res.status(400).json({
-          message: `Insufficient stock for ${product.name}`
+          message: `Insufficient stock for ${product.name}`,
         });
       }
 
@@ -103,8 +99,8 @@ export const createSale = async (req, res) => {
           clientReferenceId,
           clientCreatedAt: clientCreatedAt ? new Date(clientCreatedAt) : null,
           fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
-          qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`
-        }
+          qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`,
+        },
       });
 
       const saleItems = [];
@@ -120,7 +116,7 @@ export const createSale = async (req, res) => {
           productId: product.id,
           quantity: item.quantity,
           unitPrice: product.sellingPrice,
-          subtotal: itemSubtotal
+          subtotal: itemSubtotal,
         });
 
         movements.push({
@@ -130,27 +126,27 @@ export const createSale = async (req, res) => {
           createdById: req.context.userId,
           type: "SALE",
           quantity: item.quantity,
-          reason: "Sale transaction"
+          reason: "Sale transaction",
         });
 
         await tx.product.update({
           where: {
-            id: product.id
+            id: product.id,
           },
           data: {
             stockQuantity: {
-              decrement: item.quantity
-            }
-          }
+              decrement: item.quantity,
+            },
+          },
         });
       }
 
       await tx.saleItem.createMany({
-        data: saleItems
+        data: saleItems,
       });
 
       await tx.inventoryMovement.createMany({
-        data: movements
+        data: movements,
       });
 
       return newSale;
@@ -169,10 +165,8 @@ export const createSale = async (req, res) => {
         subtotal,
         itemCount: items.length,
         clientCreatedAt,
-        syncedLate: clientCreatedAt
-          ? (new Date() - new Date(clientCreatedAt)) > 60000
-          : false,
-      }
+        syncedLate: clientCreatedAt ? new Date() - new Date(clientCreatedAt) > 60000 : false,
+      },
     });
 
     // Only check for low stock — the receipt itself already confirms
@@ -186,7 +180,7 @@ export const createSale = async (req, res) => {
 
     if (io) {
       io.emit("sale:completed", {
-        storeId: req.context.storeId
+        storeId: req.context.storeId,
       });
     }
 
@@ -205,24 +199,24 @@ export const getSales = async (req, res) => {
     const sales = await prisma.sale.findMany({
       where: {
         companyId: req.context.companyId,
-        storeId: req.context.storeId
+        storeId: req.context.storeId,
       },
       include: {
         user: {
           select: {
             name: true,
-            role: true
-          }
+            role: true,
+          },
         },
         saleItems: {
           include: {
-            product: true
-          }
-        }
+            product: true,
+          },
+        },
       },
       orderBy: {
-        createdAt: "desc"
-      }
+        createdAt: "desc",
+      },
     });
 
     res.json(sales);
@@ -230,7 +224,7 @@ export const getSales = async (req, res) => {
     console.error(error);
 
     res.status(500).json({
-      message: "Failed to fetch sales"
+      message: "Failed to fetch sales",
     });
   }
 };
@@ -252,27 +246,26 @@ export const getTodayStats = async (req, res) => {
         storeId: req.context.storeId,
         createdAt: {
           gte: start,
-          lte: end
-        }
+          lte: end,
+        },
       },
       select: {
-        totalAmount: true
-      }
+        totalAmount: true,
+      },
     });
 
     const totalSales = sales.reduce((sum, s) => sum + s.totalAmount, 0);
 
     res.json({
       totalSales,
-      transactions: sales.length
+      transactions: sales.length,
     });
   } catch (error) {
     res.status(500).json({
-      message: "Failed to fetch today stats"
+      message: "Failed to fetch today stats",
     });
   }
 };
-
 
 /**
  * REQUEST VOID or REFUND

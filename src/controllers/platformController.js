@@ -50,13 +50,17 @@ export const verifyPayment = async (req, res) => {
     }
 
     const pkg = await prisma.package.findUnique({ where: { code: packageCode || "STARTER" } });
-    const cycle = await prisma.billingCycle.findUnique({ where: { code: billingCycleCode || "MONTHLY" } });
+    const cycle = await prisma.billingCycle.findUnique({
+      where: { code: billingCycleCode || "MONTHLY" },
+    });
 
     if (!pkg || !pkg.isActive) {
       return res.status(400).json({ message: `Package "${packageCode}" is not available` });
     }
     if (!cycle || !cycle.isActive) {
-      return res.status(400).json({ message: `Billing cycle "${billingCycleCode}" is not available` });
+      return res
+        .status(400)
+        .json({ message: `Billing cycle "${billingCycleCode}" is not available` });
     }
 
     const totalMonths = cycle.payMonths + cycle.bonusMonths;
@@ -78,7 +82,12 @@ export const verifyPayment = async (req, res) => {
       action: "PAYMENT_VERIFIED",
       entityType: "payment",
       entityId: id,
-      metadata: { companyId: payment.companyId, amount: payment.amount, package: pkg.code, billingCycle: cycle.code },
+      metadata: {
+        companyId: payment.companyId,
+        amount: payment.amount,
+        package: pkg.code,
+        billingCycle: cycle.code,
+      },
     });
 
     res.json(verified);
@@ -119,7 +128,14 @@ export const getCompanyDetail = async (req, res) => {
         bundles: { include: { bundle: true } },
         stores: true,
         users: {
-          select: { id: true, name: true, email: true, role: true, isActive: true, createdAt: true },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            isActive: true,
+            createdAt: true,
+          },
         },
         payments: { orderBy: { createdAt: "desc" }, take: 20 },
       },
@@ -228,7 +244,14 @@ export const getPlatformOverview = async (req, res) => {
       .map(([month, count]) => ({ month, count }))
       .sort((a, b) => a.month.localeCompare(b.month));
 
-    res.json({ totalCompanies, subscriptionBreakdown, estimatedMRR, signupsByMonth, paidChurn, trialChurn });
+    res.json({
+      totalCompanies,
+      subscriptionBreakdown,
+      estimatedMRR,
+      signupsByMonth,
+      paidChurn,
+      trialChurn,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to fetch analytics" });
@@ -550,10 +573,19 @@ export const updateBusinessCode = async (req, res) => {
 export const createCompanyOnboarding = async (req, res) => {
   try {
     const {
-      companyName, phone, email, country, currency,
-      packageCode, extraBundleCodes = [], billingCycleCode,
-      storeName, storeLocation,
-      gmName, gmEmail, gmPhone,
+      companyName,
+      phone,
+      email,
+      country,
+      currency,
+      packageCode,
+      extraBundleCodes = [],
+      billingCycleCode,
+      storeName,
+      storeLocation,
+      gmName,
+      gmEmail,
+      gmPhone,
     } = req.body;
 
     if (!companyName || !packageCode || !billingCycleCode || !storeName || !gmName || !gmEmail) {
@@ -567,7 +599,9 @@ export const createCompanyOnboarding = async (req, res) => {
 
     const cycle = await prisma.billingCycle.findUnique({ where: { code: billingCycleCode } });
     if (!cycle || !cycle.isActive) {
-      return res.status(400).json({ message: `Billing cycle "${billingCycleCode}" is not available` });
+      return res
+        .status(400)
+        .json({ message: `Billing cycle "${billingCycleCode}" is not available` });
     }
 
     const extraBundles = await prisma.bundle.findMany({
@@ -595,7 +629,15 @@ export const createCompanyOnboarding = async (req, res) => {
 
     const result = await prisma.$transaction(async (tx) => {
       const company = await tx.company.create({
-        data: { name: companyName, phone, email, country, currency: currency || "UGX", businessCode, termsAcceptedAt: new Date() },
+        data: {
+          name: companyName,
+          phone,
+          email,
+          country,
+          currency: currency || "UGX",
+          businessCode,
+          termsAcceptedAt: new Date(),
+        },
       });
 
       const store = await tx.store.create({
@@ -654,7 +696,7 @@ export const createCompanyOnboarding = async (req, res) => {
       return { company, store, gm, subscription, payment };
     });
 
-        await createPlatformAuditLog({
+    await createPlatformAuditLog({
       platformAdminId: req.platformAdmin.id,
       action: "COMPANY_ONBOARDED",
       entityType: "company",
@@ -681,7 +723,9 @@ export const createCompanyOnboarding = async (req, res) => {
     });
   } catch (err) {
     if (err.code === "P2002") {
-      return res.status(400).json({ message: "A user with that email already exists in this company" });
+      return res
+        .status(400)
+        .json({ message: "A user with that email already exists in this company" });
     }
     console.error(err);
     res.status(500).json({ message: "Failed to onboard company" });

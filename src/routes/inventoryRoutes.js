@@ -4,12 +4,12 @@ import protect from "../middleware/protect.js";
 import {
   getMovements,
   adjustStock,
+  transferStock,
 } from "../controllers/inventoryController.js";
 import checkPermission from "../middleware/checkPermission.js";
-
+import checkFeatureAccess from "../middleware/checkFeatureAccess.js";
 
 const router = express.Router();
-
 
 /**
  * Inventory movements
@@ -22,7 +22,6 @@ router.get(
   getMovements
 );
 
-
 /**
  * Stock adjustment
  * POST /api/inventory/adjust
@@ -30,8 +29,17 @@ router.get(
 router.post(
   "/adjust",
   protect,
+  checkPermission("inventory"),
+  checkFeatureAccess("inventory"),
   adjustStock
 );
 
+router.post(
+  "/transfer",
+  protect,
+  checkPermission("inventory"),
+  checkFeatureAccess("inventory"),
+  transferStock
+);
 
 export default router;

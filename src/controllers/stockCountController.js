@@ -12,7 +12,9 @@ export const createStockCount = async (req, res) => {
     const { companyId, storeId, userId } = req.context;
 
     if (!storeId || storeId === "ALL") {
-      return res.status(400).json({ message: "Select a specific store before starting a stock count" });
+      return res
+        .status(400)
+        .json({ message: "Select a specific store before starting a stock count" });
     }
 
     // Don't allow two open counts on the same store at once — confusing to reconcile.
@@ -98,9 +100,7 @@ export const getStockCounts = async (req, res) => {
 
     // Attach a lightweight summary so the list view doesn't need a second call
     const withSummary = counts.map((c) => {
-      const discrepancies = c.items.filter(
-        (i) => i.variance !== null && i.variance !== 0
-      );
+      const discrepancies = c.items.filter((i) => i.variance !== null && i.variance !== 0);
       const shrinkage = c.items.filter((i) => (i.variance || 0) < 0).length;
 
       return {
@@ -143,7 +143,13 @@ export const getStockCountById = async (req, res) => {
       include: {
         store: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true, role: true } },
-        items: { include: { product: { select: { id: true, name: true, sku: true, unitType: true, buyingPrice: true } } } },
+        items: {
+          include: {
+            product: {
+              select: { id: true, name: true, sku: true, unitType: true, buyingPrice: true },
+            },
+          },
+        },
       },
     });
 
@@ -309,9 +315,7 @@ export const completeStockCount = async (req, res) => {
         discrepancyCount: discrepancies.length,
         totalShrinkageValue,
         totalOverageValue,
-        topDiscrepancies: discrepancies
-          .sort((a, b) => a.value - b.value)
-          .slice(0, 5),
+        topDiscrepancies: discrepancies.sort((a, b) => a.value - b.value).slice(0, 5),
       },
     });
 

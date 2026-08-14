@@ -1,9 +1,17 @@
-import prisma from '../lib/prisma.js';
+import prisma from "../lib/prisma.js";
 
-const createAuditLog = async ({ userId, companyId, storeId, action, entityType, entityId, metadata }) => {
+const createAuditLog = async ({
+  userId,
+  companyId,
+  storeId,
+  action,
+  entityType,
+  entityId,
+  metadata,
+}) => {
   try {
     if (!companyId) {
-      console.error('Audit log skipped: companyId is required', { action, entityType, entityId });
+      console.error("Audit log skipped: companyId is required", { action, entityType, entityId });
       return;
     }
 
@@ -19,7 +27,7 @@ const createAuditLog = async ({ userId, companyId, storeId, action, entityType, 
       },
     });
   } catch (error) {
-    console.error('Audit log failed:', error);
+    console.error("Audit log failed:", error);
   }
 };
 

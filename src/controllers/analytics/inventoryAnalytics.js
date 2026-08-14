@@ -44,24 +44,19 @@ export const inventoryAnalytics = async (companyId, storeId) => {
   });
 
   const inventoryValue = products.reduce(
-    (sum, product) =>
-      sum + toNumber(product.buyingPrice) * toNumber(product.stockQuantity),
+    (sum, product) => sum + toNumber(product.buyingPrice) * toNumber(product.stockQuantity),
     0
   );
 
-  const lowStock = products.filter(
-    (product) => toNumber(product.stockQuantity) <= 10
-  );
+  const lowStock = products.filter((product) => toNumber(product.stockQuantity) <= 10);
 
-  const overStock = products.filter(
-    (product) => toNumber(product.stockQuantity) >= 100
-  );
+  const overStock = products.filter((product) => toNumber(product.stockQuantity) >= 100);
 
   // Sales – only completed ones
   const sales = await prisma.sale.findMany({
     where: {
       ...where,
-      status: "COMPLETED",           // ← added
+      status: "COMPLETED", // ← added
     },
     include: {
       saleItems: {
@@ -96,19 +91,12 @@ export const inventoryAnalytics = async (companyId, storeId) => {
   const soldIds = Object.keys(soldMap);
 
   const deadStock = products.filter(
-    (product) =>
-      !soldIds.includes(product.id) && toNumber(product.stockQuantity) > 0
+    (product) => !soldIds.includes(product.id) && toNumber(product.stockQuantity) > 0
   );
 
-  const totalSold = Object.values(soldMap).reduce(
-    (sum, item) => sum + item.sold,
-    0
-  );
+  const totalSold = Object.values(soldMap).reduce((sum, item) => sum + item.sold, 0);
 
-  const totalStock = products.reduce(
-    (sum, product) => sum + toNumber(product.stockQuantity),
-    0
-  );
+  const totalStock = products.reduce((sum, product) => sum + toNumber(product.stockQuantity), 0);
 
   const inventoryTurnover = totalStock === 0 ? 0 : totalSold / totalStock;
 

@@ -10,23 +10,14 @@ import {
   getLowStock,
 } from "../controllers/productController.js";
 import checkPermission from "../middleware/checkPermission.js";
+import checkFeatureAccess from "../middleware/checkFeatureAccess.js";
 
 const router = express.Router();
 
-router.post("/", protect, createProduct);
+router.post("/", protect, checkPermission("products"), checkFeatureAccess("products"), createProduct);
 router.get("/", protect, getProducts);
 router.get("/low-stock", protect, checkPermission("products"), getLowStock);
-router.put("/:id", protect, checkPermission("products"), updateProduct);
-router.delete(
-  "/:id",
-  protect,
-  checkPermission("products"),
-  deleteProduct
-);
-router.post(
-  "/",
-  protect,
-  checkPermission("products"),
-  createProduct
-);
+router.put("/:id", protect, checkPermission("products"), checkFeatureAccess("products"), updateProduct);
+router.delete("/:id", protect, checkPermission("products"), deleteProduct);
+
 export default router;

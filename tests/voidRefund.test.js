@@ -60,9 +60,7 @@ describe("Void request/approval flow", () => {
       .set(authHeader(ctx.cashier))
       .send({ reason: "Test" });
 
-    const res = await request(app)
-      .post(`/api/sales/${sale.id}/approve`)
-      .set(authHeader(ctx.gm));
+    const res = await request(app).post(`/api/sales/${sale.id}/approve`).set(authHeader(ctx.gm));
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("VOID");

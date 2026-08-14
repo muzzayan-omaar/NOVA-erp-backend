@@ -1,11 +1,6 @@
 import prisma from "../../lib/prisma.js";
 
-import {
-  toNumber,
-  formatDate,
-  calculateProfit,
-  getDaysAgo,
-} from "./analyticsHelper.js";
+import { toNumber, formatDate, calculateProfit, getDaysAgo } from "./analyticsHelper.js";
 
 export const salesAnalytics = async (companyId, storeId, period = 30) => {
   // Critical fix: only count completed sales
@@ -55,9 +50,7 @@ export const salesAnalytics = async (companyId, storeId, period = 30) => {
     trendMap[date].profit += calculateProfit(sale.saleItems);
   });
 
-  const salesTrend = Object.values(trendMap).sort((a, b) =>
-    a.date.localeCompare(b.date)
-  );
+  const salesTrend = Object.values(trendMap).sort((a, b) => a.date.localeCompare(b.date));
 
   // Cashier Performance (leaderboard)
   const cashierMap = {};
@@ -74,9 +67,7 @@ export const salesAnalytics = async (companyId, storeId, period = 30) => {
     cashierMap[sale.userId].transactionCount++;
   });
 
-  const cashierPerformance = Object.values(cashierMap).sort(
-    (a, b) => b.totalSales - a.totalSales
-  );
+  const cashierPerformance = Object.values(cashierMap).sort((a, b) => b.totalSales - a.totalSales);
 
   // Payment Breakdown
   const paymentMap = {};
@@ -122,9 +113,6 @@ export const salesAnalytics = async (companyId, storeId, period = 30) => {
     paymentBreakdown,
     topProducts,
     totalSales: sales.length,
-    totalRevenue: sales.reduce(
-      (sum, s) => sum + toNumber(s.totalAmount),
-      0
-    ),
+    totalRevenue: sales.reduce((sum, s) => sum + toNumber(s.totalAmount), 0),
   };
 };

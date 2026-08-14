@@ -1,19 +1,11 @@
 import prisma from "../../lib/prisma.js";
 
-import {
-  toNumber,
-  calculateProfit,
-  getDaysAgo,
-} from "./analyticsHelper.js";
+import { toNumber, calculateProfit, getDaysAgo } from "./analyticsHelper.js";
 
-export const financeAnalytics = async (
-  companyId,
-  storeId,
-  period = 30
-) => {
+export const financeAnalytics = async (companyId, storeId, period = 30) => {
   const where = {
     companyId,
-    status: "COMPLETED",           // ← added
+    status: "COMPLETED", // ← added
     createdAt: {
       gte: getDaysAgo(period),
     },
@@ -34,28 +26,15 @@ export const financeAnalytics = async (
     },
   });
 
-  const totalRevenue = sales.reduce(
-    (sum, sale) => sum + toNumber(sale.totalAmount),
-    0
-  );
+  const totalRevenue = sales.reduce((sum, sale) => sum + toNumber(sale.totalAmount), 0);
 
-  const grossProfit = sales.reduce(
-    (sum, sale) => sum + calculateProfit(sale.saleItems),
-    0
-  );
+  const grossProfit = sales.reduce((sum, sale) => sum + calculateProfit(sale.saleItems), 0);
 
-  const profitMargin =
-    totalRevenue === 0 ? 0 : (grossProfit / totalRevenue) * 100;
+  const profitMargin = totalRevenue === 0 ? 0 : (grossProfit / totalRevenue) * 100;
 
-  const vatCollected = sales.reduce(
-    (sum, sale) => sum + toNumber(sale.vatAmount),
-    0
-  );
+  const vatCollected = sales.reduce((sum, sale) => sum + toNumber(sale.vatAmount), 0);
 
-  const discounts = sales.reduce(
-    (sum, sale) => sum + toNumber(sale.discount),
-    0
-  );
+  const discounts = sales.reduce((sum, sale) => sum + toNumber(sale.discount), 0);
 
   // Payment methods
   const paymentMap = {};
@@ -101,10 +80,7 @@ export const financeAnalytics = async (
     select: { totalOwed: true },
   });
 
-  const supplierDebt = suppliers.reduce(
-    (sum, supplier) => sum + toNumber(supplier.totalOwed),
-    0
-  );
+  const supplierDebt = suppliers.reduce((sum, supplier) => sum + toNumber(supplier.totalOwed), 0);
 
   // Monthly finance
   const monthlyMap = {};
@@ -123,9 +99,7 @@ export const financeAnalytics = async (
     monthlyMap[month].profit += calculateProfit(sale.saleItems);
   });
 
-  const monthlyFinance = Object.values(monthlyMap).sort((a, b) =>
-    a.month.localeCompare(b.month)
-  );
+  const monthlyFinance = Object.values(monthlyMap).sort((a, b) => a.month.localeCompare(b.month));
 
   return {
     totalRevenue,

@@ -94,16 +94,12 @@ describe("Expenses", () => {
       .set(authHeader(manager2))
       .send({ category: "Supplies", amount: 20000 });
 
-    const managerView = await request(app)
-      .get("/api/expenses")
-      .set(authHeader(ctx.branchManager));
+    const managerView = await request(app).get("/api/expenses").set(authHeader(ctx.branchManager));
 
     expect(managerView.body).toHaveLength(1);
     expect(managerView.body[0].amount).toBe(10000);
 
-    const gmView = await request(app)
-      .get("/api/expenses")
-      .set(authHeader(ctx.gm));
+    const gmView = await request(app).get("/api/expenses").set(authHeader(ctx.gm));
 
     expect(gmView.body).toHaveLength(2); // both branches, this is the bug we fixed
   });

@@ -15,9 +15,7 @@ export const getToday = () => {
  * Returns date X days ago
  */
 export const getDaysAgo = (days) => {
-  return new Date(
-    Date.now() - Number(days) * 24 * 60 * 60 * 1000
-  );
+  return new Date(Date.now() - Number(days) * 24 * 60 * 60 * 1000);
 };
 
 /**
@@ -64,9 +62,7 @@ export const groupBy = (array, callback) => {
  * Sort descending
  */
 export const sortDesc = (array, field) => {
-  return [...array].sort(
-    (a, b) => b[field] - a[field]
-  );
+  return [...array].sort((a, b) => b[field] - a[field]);
 };
 
 /**
@@ -77,9 +73,7 @@ export const calculateProfit = (saleItems) => {
 
   saleItems.forEach((item) => {
     profit +=
-      (toNumber(item.unitPrice) -
-        toNumber(item.product.buyingPrice)) *
-      toNumber(item.quantity);
+      (toNumber(item.unitPrice) - toNumber(item.product.buyingPrice)) * toNumber(item.quantity);
   });
 
   return profit;
@@ -88,10 +82,7 @@ export const calculateProfit = (saleItems) => {
 /**
  * Percentage growth
  */
-export const calculateGrowth = (
-  current,
-  previous
-) => {
+export const calculateGrowth = (current, previous) => {
   current = toNumber(current);
   previous = toNumber(previous);
 
@@ -106,8 +97,5 @@ export const calculateGrowth = (
 export const average = (numbers = []) => {
   if (numbers.length === 0) return 0;
 
-  return (
-    numbers.reduce((a, b) => a + b, 0) /
-    numbers.length
-  );
+  return numbers.reduce((a, b) => a + b, 0) / numbers.length;
 };

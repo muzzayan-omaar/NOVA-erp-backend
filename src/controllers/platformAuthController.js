@@ -30,11 +30,9 @@ export const loginPlatformAdmin = async (req, res) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    const token = jwt.sign(
-      { id: admin.id, type: "platform" },
-      process.env.JWT_SECRET,
-      { expiresIn: "1d" }
-    );
+    const token = jwt.sign({ id: admin.id, type: "platform" }, process.env.JWT_SECRET, {
+      expiresIn: "1d",
+    });
 
     res.json({ token, admin: sanitize(admin) });
   } catch (err) {

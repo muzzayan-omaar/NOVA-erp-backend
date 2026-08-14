@@ -1,6 +1,12 @@
 import prisma from "../lib/prisma.js";
 
-const createPlatformAuditLog = async ({ platformAdminId, action, entityType, entityId, metadata }) => {
+const createPlatformAuditLog = async ({
+  platformAdminId,
+  action,
+  entityType,
+  entityId,
+  metadata,
+}) => {
   try {
     await prisma.platformAuditLog.create({
       data: { platformAdminId, action, entityType, entityId, metadata },

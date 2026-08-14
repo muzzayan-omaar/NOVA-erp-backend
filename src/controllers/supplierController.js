@@ -1,103 +1,61 @@
 import prisma from "../lib/prisma.js";
 
-
 // GET suppliers for active store
 export const getSuppliers = async (req, res) => {
   try {
-
     const { companyId, storeId } = req.context;
 
-
     const suppliers = await prisma.supplier.findMany({
-
-      where:{
+      where: {
         companyId,
-        storeId
+        storeId,
       },
 
-      orderBy:{
-        createdAt:"desc"
-      }
-
+      orderBy: {
+        createdAt: "desc",
+      },
     });
 
-
     res.json(suppliers);
-
-
-  } catch(err){
-
+  } catch (err) {
     console.error(err);
 
     res.status(500).json({
-      message:err.message
+      message: err.message,
     });
-
   }
 };
 
-
-
-
 // CREATE supplier
-export const createSupplier = async(req,res)=>{
+export const createSupplier = async (req, res) => {
+  try {
+    const { name, phone, email, address, totalOwed } = req.body;
 
-try{
+    const { companyId, storeId } = req.context;
 
-const {
-name,
-phone,
-email,
-address,
-totalOwed
-}=req.body;
+    const supplier = await prisma.supplier.create({
+      data: {
+        companyId,
+        storeId,
 
+        name,
+        phone,
+        email,
+        address,
 
-const {
-companyId,
-storeId
-}=req.context;
+        totalOwed: Number(totalOwed) || 0,
+      },
+    });
 
+    res.json(supplier);
+  } catch (err) {
+    console.error(err);
 
-
-const supplier = await prisma.supplier.create({
-
-data:{
-
-companyId,
-storeId,
-
-name,
-phone,
-email,
-address,
-
-totalOwed:Number(totalOwed)||0
-
-}
-
-});
-
-
-res.json(supplier);
-
-
-
-}catch(err){
-
-console.error(err);
-
-res.status(500).json({
-message:err.message
-});
-
-}
-
+    res.status(500).json({
+      message: err.message,
+    });
+  }
 };
-
-
-
-
 
 // UPDATE supplier
 export const updateSupplier = async (req, res) => {

@@ -1,9 +1,9 @@
 import {
-    getNotifications,
-    getUnreadCount,
-    markAsRead,
-    markAllAsRead,
-    deleteNotification
+  getNotifications,
+  getUnreadCount,
+  markAsRead,
+  markAllAsRead,
+  deleteNotification,
 } from "./notification.service.js";
 
 export const fetchNotifications = async (req, res) => {

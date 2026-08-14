@@ -56,7 +56,9 @@ export const createExpense = async (req, res) => {
     }
 
     if (!storeId || storeId === "ALL") {
-      return res.status(400).json({ message: "Select a specific store before recording an expense" });
+      return res
+        .status(400)
+        .json({ message: "Select a specific store before recording an expense" });
     }
 
     const expense = await prisma.expense.create({
@@ -91,7 +93,12 @@ export const createExpense = async (req, res) => {
 export const deleteExpense = async (req, res) => {
   try {
     const { id } = req.params;
-    const { companyId, userId } = req.context;
+    const { companyId, userId, role } = req.context;
+
+    // Only General Manager may delete expenses
+    if (role !== "GENERAL_MANAGER") {
+      return res.status(403).json({ message: "Only General Manager can delete expenses" });
+    }
 
     const existing = await prisma.expense.findFirst({
       where: { id, companyId },

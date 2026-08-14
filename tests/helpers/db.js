@@ -18,7 +18,13 @@ export const resetDb = async () => {
   await prisma.payroll.deleteMany();
   await prisma.user.deleteMany();
   await prisma.store.deleteMany();
-  await prisma.subscription.deleteMany();   // ← added
+
+  // Join tables & subscription first (FK order)
+  await prisma.subscription.deleteMany();
+  await prisma.packageBundle.deleteMany();
+  // await prisma.companyBundle.deleteMany(); // uncomment only if this model exists
+  await prisma.package.deleteMany();
+  await prisma.bundle.deleteMany();
   await prisma.company.deleteMany();
 };
 
@@ -28,15 +34,87 @@ export const seedCompany = async () => {
     data: { name: "Test Traders", country: "Uganda" },
   });
 
-  // Give the seeded company an active subscription so middleware doesn't 402
+  // ── Package + Bundle that grants the features tests need ──────────────
+  const starterPackage = await prisma.package.upsert({
+    where: { code: "STARTER" },
+    update: {},
+    create: {
+      code: "STARTER",
+      name: "Starter",
+      price: 50000,
+      maxStores: 5,
+      maxUsers: 20,
+    },
+  });
+
+  const coreBundle = await prisma.bundle.upsert({
+    where: { code: "TEST_CORE" },
+    update: {
+      featureKeys: [
+        "dashboard",
+        "stores",
+        "users",
+        "products",
+        "inventory",
+        "sales",
+        "customers",
+        "payments",
+        "expenses",
+        "suppliers",
+        "payroll",
+        "reports",
+        "audit",
+        "billing",
+        "support",
+      ],
+    },
+    create: {
+      code: "TEST_CORE",
+      name: "Test Core",
+      price: 0,
+      featureKeys: [
+        "dashboard",
+        "stores",
+        "users",
+        "products",
+        "inventory",
+        "sales",
+        "customers",
+        "payments",
+        "expenses",
+        "suppliers",
+        "payroll",
+        "reports",
+        "audit",
+        "billing",
+        "support",
+      ],
+    },
+  });
+
+  await prisma.packageBundle.upsert({
+    where: {
+      packageId_bundleId: {
+        packageId: starterPackage.id,
+        bundleId: coreBundle.id,
+      },
+    },
+    update: {},
+    create: {
+      packageId: starterPackage.id,
+      bundleId: coreBundle.id,
+    },
+  });
+
   await prisma.subscription.create({
     data: {
       companyId: company.id,
-      plan: "BASIC",
+      packageId: starterPackage.id,
       status: "ACTIVE",
-      endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days
     },
   });
+  // ─────────────────────────────────────────────────────────────────────
 
   const store = await prisma.store.create({
     data: {

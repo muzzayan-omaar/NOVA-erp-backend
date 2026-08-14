@@ -11,8 +11,8 @@ const ask = (q) => new Promise((resolve) => rl.question(q, resolve));
 
 const run = async () => {
   const name = (await ask("Your name: ")).trim();
-const email = (await ask("Your email: ")).trim();
-const password = (await ask("Password: ")).trim();
+  const email = (await ask("Your email: ")).trim();
+  const password = (await ask("Password: ")).trim();
 
   const existing = await prisma.platformAdmin.findUnique({ where: { email } });
   if (existing) {

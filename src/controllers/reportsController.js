@@ -44,14 +44,9 @@ export const getDashboardReport = async (req, res) => {
       },
     });
 
-    const stockValue = products.reduce(
-      (sum, p) => sum + (p.stockQuantity || 0) * p.buyingPrice,
-      0
-    );
+    const stockValue = products.reduce((sum, p) => sum + (p.stockQuantity || 0) * p.buyingPrice, 0);
 
-    const lowStock = products.filter(
-      (p) => (p.stockQuantity || 0) <= 5
-    ).length;
+    const lowStock = products.filter((p) => (p.stockQuantity || 0) <= 5).length;
 
     // ---------- CUSTOMERS ----------
     const customers = await prisma.customer.findMany({
@@ -64,10 +59,7 @@ export const getDashboardReport = async (req, res) => {
       },
     });
 
-    const customerCredit = customers.reduce(
-      (sum, c) => sum + c.totalCredit,
-      0
-    );
+    const customerCredit = customers.reduce((sum, c) => sum + c.totalCredit, 0);
 
     // ---------- SUPPLIERS ----------
     const suppliers = await prisma.supplier.findMany({
@@ -80,10 +72,7 @@ export const getDashboardReport = async (req, res) => {
       },
     });
 
-    const supplierOwed = suppliers.reduce(
-      (sum, s) => sum + s.totalOwed,
-      0
-    );
+    const supplierOwed = suppliers.reduce((sum, s) => sum + s.totalOwed, 0);
 
     // ---------- PAYROLL ----------
     const payroll = await prisma.payroll.findMany({
@@ -96,10 +85,7 @@ export const getDashboardReport = async (req, res) => {
       },
     });
 
-    const payrollCost = payroll.reduce(
-      (sum, p) => sum + p.netPay,
-      0
-    );
+    const payrollCost = payroll.reduce((sum, p) => sum + p.netPay, 0);
 
     // ---------- PAYMENTS ----------
     let cash = 0;

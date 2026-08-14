@@ -168,3 +168,19 @@ export const toggleStoreStatus = async (req, res) => {
     });
   }
 };
+// GET /api/stores/options — minimal store list for pickers (transfers, etc),
+// available to any authenticated company user, not just those with the
+// full "stores" management permission.
+export const getStoreOptions = async (req, res) => {
+  try {
+    const stores = await prisma.store.findMany({
+      where: { companyId: req.context.companyId, isActive: true },
+      select: { id: true, name: true, isHeadOffice: true },
+      orderBy: { name: "asc" },
+    });
+    res.json(stores);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Failed to fetch store options" });
+  }
+};

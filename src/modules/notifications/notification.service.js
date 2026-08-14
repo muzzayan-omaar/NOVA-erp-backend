@@ -10,9 +10,9 @@ export const createNotification = async (data) => {
         where: {
           companyId_uniqueKey: {
             companyId: data.companyId,
-            uniqueKey: data.uniqueKey
-          }
-        }
+            uniqueKey: data.uniqueKey,
+          },
+        },
       })
     : null;
 
@@ -21,7 +21,7 @@ export const createNotification = async (data) => {
   }
 
   const notification = await prisma.notification.create({
-    data
+    data,
   });
 
   const io = global.io;
@@ -40,8 +40,8 @@ export const getNotifications = async ({ companyId, userId, storeId }) => {
       AND: [
         {
           OR: [
-            { userId },           // personal
-            { userId: null },     // company-wide
+            { userId }, // personal
+            { userId: null }, // company-wide
           ],
         },
         storeId
@@ -67,12 +67,8 @@ export const getUnreadCount = async ({ companyId, userId, storeId }) => {
     where: {
       companyId,
       isRead: false,
-      OR: [
-        { userId },
-        { userId: null },
-        ...(storeId ? [{ storeId }] : [])
-      ]
-    }
+      OR: [{ userId }, { userId: null }, ...(storeId ? [{ storeId }] : [])],
+    },
   });
 };
 
@@ -106,11 +102,7 @@ export const markAllAsRead = async ({ companyId, userId, storeId }) => {
     where: {
       companyId,
       isRead: false,
-      OR: [
-        { userId },
-        { userId: null, storeId },
-        { userId: null, storeId: null },
-      ],
+      OR: [{ userId }, { userId: null, storeId }, { userId: null, storeId: null }],
     },
     data: {
       isRead: true,

@@ -1,155 +1,91 @@
 import prisma from "../lib/prisma.js";
 import createAuditLog from "../services/auditService.js";
 
-
 // CREATE PAYROLL
-export const createPayroll = async (req,res)=>{
+export const createPayroll = async (req, res) => {
+  try {
+    const { userId, salary, bonus = 0, deductions = 0, month } = req.body;
 
-try{
+    const { companyId, storeId, userId: createdBy } = req.context;
 
-const {
-userId,
-salary,
-bonus=0,
-deductions=0,
-month
-}=req.body;
+    const payroll = await prisma.payroll.create({
+      data: {
+        companyId,
 
+        storeId,
 
-const {
-companyId,
-storeId,
-userId: createdBy
-}=req.context;
+        userId,
 
+        salary: Number(salary),
 
+        bonus: Number(bonus),
 
-const payroll = await prisma.payroll.create({
+        deductions: Number(deductions),
 
-data:{
+        netPay: Number(salary) + Number(bonus) - Number(deductions),
 
-companyId,
+        month,
+      },
+    });
 
-storeId,
+    await createAuditLog({
+      userId: createdBy,
 
-userId,
+      action: "PAYROLL_CREATED",
 
-salary:Number(salary),
+      entityType: "payroll",
 
-bonus:Number(bonus),
+      entityId: payroll.id,
 
-deductions:Number(deductions),
+      metadata: payroll,
 
-netPay:
-Number(salary)
-+
-Number(bonus)
--
-Number(deductions),
+      companyId,
 
-month
+      storeId,
+    });
 
-}
+    res.status(201).json(payroll);
+  } catch (error) {
+    console.error(error);
 
-});
-
-
-
-await createAuditLog({
-
-userId:createdBy,
-
-action:"PAYROLL_CREATED",
-
-entityType:"payroll",
-
-entityId:payroll.id,
-
-metadata:payroll,
-
-companyId,
-
-storeId
-
-});
-
-
-
-res.status(201).json(payroll);
-
-
-
-}catch(error){
-
-console.error(error);
-
-res.status(500).json({
-message:error.message
-});
-
-}
-
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 };
 
-
-
-
-
 // GET PAYROLL
-export const getPayroll = async(req,res)=>{
+export const getPayroll = async (req, res) => {
+  try {
+    const { companyId, storeId } = req.context;
 
-try{
+    const payroll = await prisma.payroll.findMany({
+      where: {
+        companyId,
 
-const {
-companyId,
-storeId
-}=req.context;
+        storeId,
+      },
 
+      include: {
+        user: {
+          select: {
+            name: true,
+            role: true,
+          },
+        },
+      },
 
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
 
-const payroll = await prisma.payroll.findMany({
+    res.json(payroll);
+  } catch (error) {
+    console.error(error);
 
-where:{
-
-companyId,
-
-storeId
-
-},
-
-
-include:{
-
-user:{
-select:{
-name:true,
-role:true
-}
-}
-
-},
-
-
-orderBy:{
-createdAt:"desc"
-}
-
-
-});
-
-
-res.json(payroll);
-
-
-
-}catch(error){
-
-console.error(error);
-
-res.status(500).json({
-message:error.message
-});
-
-}
-
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 };

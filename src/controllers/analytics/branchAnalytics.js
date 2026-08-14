@@ -1,15 +1,12 @@
 import prisma from "../../lib/prisma.js";
 
-import {
-  toNumber,
-  calculateProfit,
-} from "./analyticsHelper.js";
+import { toNumber, calculateProfit } from "./analyticsHelper.js";
 
 export const branchAnalytics = async (companyId) => {
   const sales = await prisma.sale.findMany({
     where: {
       companyId,
-      status: "COMPLETED",          // ← added
+      status: "COMPLETED", // ← added
     },
     include: {
       saleItems: {
@@ -40,8 +37,7 @@ export const branchAnalytics = async (companyId) => {
   });
 
   Object.values(branchMap).forEach((branch) => {
-    branch.averageSale =
-      branch.transactions === 0 ? 0 : branch.revenue / branch.transactions;
+    branch.averageSale = branch.transactions === 0 ? 0 : branch.revenue / branch.transactions;
   });
 
   // Customers
@@ -73,24 +69,16 @@ export const branchAnalytics = async (companyId) => {
       toNumber(product.stockQuantity) * toNumber(product.buyingPrice);
   });
 
-  const branchPerformance = Object.values(branchMap).sort(
-    (a, b) => b.revenue - a.revenue
-  );
+  const branchPerformance = Object.values(branchMap).sort((a, b) => b.revenue - a.revenue);
 
   const bestBranch = branchPerformance[0] || null;
   const weakestBranch =
-    branchPerformance.length > 0
-      ? branchPerformance[branchPerformance.length - 1]
-      : null;
+    branchPerformance.length > 0 ? branchPerformance[branchPerformance.length - 1] : null;
 
-  const totalRevenue = branchPerformance.reduce(
-    (sum, branch) => sum + branch.revenue,
-    0
-  );
+  const totalRevenue = branchPerformance.reduce((sum, branch) => sum + branch.revenue, 0);
 
   branchPerformance.forEach((branch) => {
-    branch.marketShare =
-      totalRevenue === 0 ? 0 : (branch.revenue / totalRevenue) * 100;
+    branch.marketShare = totalRevenue === 0 ? 0 : (branch.revenue / totalRevenue) * 100;
   });
 
   return {

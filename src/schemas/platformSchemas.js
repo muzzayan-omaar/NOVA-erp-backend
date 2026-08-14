@@ -16,8 +16,7 @@ export const onboardingSchema = z.object({
   gmPhone: z.string().optional(),
   repConfirmedClientAgreed: z.literal(true, {
     errorMap: () => ({
-      message:
-        "You must confirm the client has agreed to the Terms before creating their account",
+      message: "You must confirm the client has agreed to the Terms before creating their account",
     }),
   }),
 });

@@ -38,14 +38,14 @@ export const createProduct = async (req, res) => {
     });
 
     await createAuditLog({
-    userId: req.context.userId,
-    companyId: req.context.companyId,
-    storeId: req.context.storeId,
-    action: "PRODUCT_CREATED",
-    entityType: "product",
-    entityId: product.id,
-    metadata: product,
-  });
+      userId: req.context.userId,
+      companyId: req.context.companyId,
+      storeId: req.context.storeId,
+      action: "PRODUCT_CREATED",
+      entityType: "product",
+      entityId: product.id,
+      metadata: product,
+    });
 
     res.status(201).json(product);
   } catch (error) {
@@ -132,20 +132,40 @@ export const updateProduct = async (req, res) => {
       },
     });
 
+    // Before/after diff — specifically so a price change (the exact fraud
+    // pattern a dishonest manager could exploit) is immediately visible in
+    // the Audit Log without a GM having to cross-reference anything.
+    const changes = {};
+    if (buyingPrice !== undefined && existingProduct.buyingPrice !== product.buyingPrice) {
+      changes.buyingPrice = { from: existingProduct.buyingPrice, to: product.buyingPrice };
+    }
+    if (sellingPrice !== undefined && existingProduct.sellingPrice !== product.sellingPrice) {
+      changes.sellingPrice = { from: existingProduct.sellingPrice, to: product.sellingPrice };
+    }
+    if (stockQuantity !== undefined && existingProduct.stockQuantity !== product.stockQuantity) {
+      changes.stockQuantity = { from: existingProduct.stockQuantity, to: product.stockQuantity };
+    }
+    if (name !== undefined && existingProduct.name !== product.name) {
+      changes.name = { from: existingProduct.name, to: product.name };
+    }
+
     await createAuditLog({
       userId: req.context.userId,
+      companyId: req.context.companyId,
+      storeId: req.context.storeId,
       action: "PRODUCT_UPDATED",
       entityType: "product",
       entityId: id,
-      metadata: product,
+      metadata: {
+        productName: product.name,
+        changes,
+      },
     });
 
     res.json(product);
   } catch (error) {
     console.error(error);
-    res.status(500).json({
-      message: "Failed to update product",
-    });
+    res.status(500).json({ message: "Failed to update product" });
   }
 };
 

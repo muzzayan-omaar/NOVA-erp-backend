@@ -1,62 +1,34 @@
 import express from "express";
 
 import {
-
-    fetchNotifications,
-    unreadNotifications,
-    readNotification,
-    readAllNotifications,
-    removeNotification,
-
+  fetchNotifications,
+  unreadNotifications,
+  readNotification,
+  readAllNotifications,
+  removeNotification,
 } from "./notification.controller.js";
-
 
 import protect from "../../middleware/protect.js";
 
-
-
 const router = express.Router();
-
-
 
 router.use(protect);
 
-
-
 // get all notifications
 
-router.get(
-    "/",
-    fetchNotifications
-);
-
-
+router.get("/", fetchNotifications);
 
 // unread count
 
-router.get(
-    "/unread-count",
-    unreadNotifications
-);
-
-
+router.get("/unread-count", unreadNotifications);
 
 // mark one read
 
-router.patch(
-    "/:id/read",
-    readNotification
-);
-
-
+router.patch("/:id/read", readNotification);
 
 // mark all read
 
-router.patch(
-    "/read-all",
-    readAllNotifications
-);
-
+router.patch("/read-all", readAllNotifications);
 
 router.delete("/:id", removeNotification);
 export default router;

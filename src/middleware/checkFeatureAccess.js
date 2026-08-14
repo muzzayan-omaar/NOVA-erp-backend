@@ -4,8 +4,14 @@ import prisma from "../lib/prisma.js";
 // able to sell, view its own dashboard, and reach billing/support, or it
 // could get locked out of the very things that would let it fix that.
 const BASELINE_FEATURES = [
-  "dashboard", "pos", "products", "inventory", "sales", "customers",
-  "billing", "support",
+  "dashboard",
+  "pos",
+  "products",
+  "inventory",
+  "sales",
+  "customers",
+  "billing",
+  "support",
 ];
 
 const checkFeatureAccess = (featureKey) => async (req, res, next) => {

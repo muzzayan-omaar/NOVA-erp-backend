@@ -1,93 +1,60 @@
 import prisma from "../lib/prisma.js";
 
-
 // GET customers for current store
 export const getCustomers = async (req, res) => {
   try {
-
     const { companyId, storeId } = req.context;
 
     const customers = await prisma.customer.findMany({
-
-      where:{
+      where: {
         companyId,
-        storeId
+        storeId,
       },
 
-      orderBy:{
-        createdAt:"desc"
-      }
-
+      orderBy: {
+        createdAt: "desc",
+      },
     });
 
-
     res.json(customers);
-
-
-  } catch(err){
-
+  } catch (err) {
     console.error(err);
 
     res.status(500).json({
-      message:err.message
+      message: err.message,
     });
-
   }
 };
 
-
-
 // CREATE customer
-export const createCustomer = async (req,res)=>{
+export const createCustomer = async (req, res) => {
+  try {
+    const { name, phone, email, totalCredit } = req.body;
 
-try{
+    const { companyId, storeId } = req.context;
 
-const {
-name,
-phone,
-email,
-totalCredit
-}=req.body;
+    const customer = await prisma.customer.create({
+      data: {
+        companyId,
+        storeId,
 
+        name,
+        phone,
+        email,
 
-const {companyId,storeId}=req.context;
+        totalCredit: Number(totalCredit) || 0,
+      },
+    });
 
+    res.json(customer);
+  } catch (err) {
+    console.error(err);
 
-
-const customer = await prisma.customer.create({
-
-data:{
-
-companyId,
-storeId,
-
-name,
-phone,
-email,
-
-totalCredit:Number(totalCredit)||0
-
-}
-
-});
-
-
-res.json(customer);
-
-
-}catch(err){
-
-console.error(err);
-
-res.status(500).json({
-message:err.message
-});
-
-}
-
+    res.status(500).json({
+      message: err.message,
+    });
+  }
 };
-
-
 
 // UPDATE customer
 export const updateCustomer = async (req, res) => {
