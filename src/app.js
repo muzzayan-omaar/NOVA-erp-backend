@@ -22,7 +22,7 @@ import subscriptionRoutes from "./routes/subscriptionRoutes.js";
 import platformRoutes from "./routes/platformRoutes.js";
 import platformAuthRoutes from "./routes/platformAuthRoutes.js";
 import catalogRoutes from "./routes/catalogRoutes.js";
-
+import purchaseOrderRoutes from "./routes/purchaseOrderRoutes.js";
 import supportRoutes from "./routes/supportRoutes.js";
 
 import notificationRoutes from "./modules/notifications/notification.routes.js";
@@ -70,6 +70,7 @@ app.use("/api/platform", platformRoutes);
 app.use("/api/catalog", catalogRoutes);
 app.use("/api/support", supportRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/purchase-orders", purchaseOrderRoutes);
 app.use(notFoundHandler);
 app.use(errorHandler);
 export default app;

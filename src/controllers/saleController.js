@@ -17,14 +17,31 @@ export const createSale = async (req, res) => {
       discount = 0,
       clientReferenceId = null,
       clientCreatedAt = null,
+      customerId = null,
     } = req.body;
 
     const io = req.app.get("io");
 
     if (!items || items.length === 0) {
       return res.status(400).json({
-        message: "Cart cannot be empty",
+        message: "Cart cannot be empty"
       });
+    }
+
+    if (paymentMethod === "CREDIT" && !customerId) {
+      return res.status(400).json({
+        message: "A customer must be selected for credit sales"
+      });
+    }
+
+    let customer = null;
+    if (customerId) {
+      customer = await prisma.customer.findFirst({
+        where: { id: customerId, companyId: req.context.companyId, storeId: req.context.storeId },
+      });
+      if (!customer) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
     }
 
     // Idempotency check — if this exact client-generated sale was already
@@ -49,11 +66,11 @@ export const createSale = async (req, res) => {
     const products = await prisma.product.findMany({
       where: {
         id: {
-          in: productIds,
+          in: productIds
         },
         companyId: req.context.companyId,
-        storeId: req.context.storeId,
-      },
+        storeId: req.context.storeId
+      }
     });
 
     const productMap = new Map(products.map((p) => [p.id, p]));
@@ -65,13 +82,13 @@ export const createSale = async (req, res) => {
 
       if (!product) {
         return res.status(404).json({
-          message: "Product not found",
+          message: "Product not found"
         });
       }
 
       if (product.stockQuantity < item.quantity) {
         return res.status(400).json({
-          message: `Insufficient stock for ${product.name}`,
+          message: `Insufficient stock for ${product.name}`
         });
       }
 
@@ -96,11 +113,12 @@ export const createSale = async (req, res) => {
           vatAmount,
           discount: Number(discount),
           paymentMethod,
+          customerId,
           clientReferenceId,
           clientCreatedAt: clientCreatedAt ? new Date(clientCreatedAt) : null,
           fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
-          qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`,
-        },
+          qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`
+        }
       });
 
       const saleItems = [];
@@ -116,7 +134,7 @@ export const createSale = async (req, res) => {
           productId: product.id,
           quantity: item.quantity,
           unitPrice: product.sellingPrice,
-          subtotal: itemSubtotal,
+          subtotal: itemSubtotal
         });
 
         movements.push({
@@ -126,28 +144,35 @@ export const createSale = async (req, res) => {
           createdById: req.context.userId,
           type: "SALE",
           quantity: item.quantity,
-          reason: "Sale transaction",
+          reason: "Sale transaction"
         });
 
         await tx.product.update({
           where: {
-            id: product.id,
+            id: product.id
           },
           data: {
             stockQuantity: {
-              decrement: item.quantity,
-            },
-          },
+              decrement: item.quantity
+            }
+          }
         });
       }
 
       await tx.saleItem.createMany({
-        data: saleItems,
+        data: saleItems
       });
 
       await tx.inventoryMovement.createMany({
-        data: movements,
+        data: movements
       });
+
+      if (paymentMethod === "CREDIT" && customerId) {
+        await tx.customer.update({
+          where: { id: customerId },
+          data: { totalCredit: { increment: totalAmount } },
+        });
+      }
 
       return newSale;
     });
@@ -165,8 +190,12 @@ export const createSale = async (req, res) => {
         subtotal,
         itemCount: items.length,
         clientCreatedAt,
-        syncedLate: clientCreatedAt ? new Date() - new Date(clientCreatedAt) > 60000 : false,
-      },
+        syncedLate: clientCreatedAt
+          ? (new Date() - new Date(clientCreatedAt)) > 60000
+          : false,
+        customerId,
+        paymentMethod,
+      }
     });
 
     // Only check for low stock — the receipt itself already confirms
@@ -180,7 +209,7 @@ export const createSale = async (req, res) => {
 
     if (io) {
       io.emit("sale:completed", {
-        storeId: req.context.storeId,
+        storeId: req.context.storeId
       });
     }
 
@@ -436,6 +465,15 @@ export const approveSaleAction = async (req, res) => {
         });
       }
 
+      // A voided/refunded credit sale means the customer no longer owes
+      // for it — reverse the debt exactly as it was applied.
+      if (sale.paymentMethod === "CREDIT" && sale.customerId) {
+        await tx.customer.update({
+          where: { id: sale.customerId },
+          data: { totalCredit: { decrement: sale.totalAmount } },
+        });
+      }
+
       return tx.sale.update({
         where: { id: sale.id },
         data: {
@@ -457,6 +495,7 @@ export const approveSaleAction = async (req, res) => {
         reason: sale.voidReason,
         requestedBy: sale.voidedById,
         totalAmount: sale.totalAmount,
+        creditReversed: sale.paymentMethod === "CREDIT",
       },
     });
 

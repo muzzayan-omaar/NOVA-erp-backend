@@ -32,7 +32,7 @@ model Company {
   suppliers          Supplier[]
   users              User[]
   notifications      Notification[]
-
+  customerPayments CustomerPayment[]
   expenses    Expense[]
   stockCounts StockCount[]
   supportThreads SupportThread[]
@@ -40,6 +40,7 @@ model Company {
   subscription Subscription?
   payments     Payment[]
   bundles CompanyBundle[]
+  purchaseOrders PurchaseOrder[]
   
   @@map("company")
 }
@@ -69,6 +70,8 @@ model Store {
   notifications      Notification[]
   expenses           Expense[]
   stockCounts        StockCount[]
+  purchaseOrders PurchaseOrder[]
+  customerPayments CustomerPayment[]
 
   @@map("store")
 }
@@ -91,6 +94,8 @@ model User {
   sales          Sale[]
   notifications  Notification[]
   supportMessages SupportMessage[]
+  purchaseOrders PurchaseOrder[]
+  customerPayments CustomerPayment[]
   isPlatformAdmin   Boolean   @default(false)
   mustChangePassword Boolean @default(false)
   paymentsSubmitted Payment[] @relation("PaymentSubmittedBy")
@@ -128,6 +133,7 @@ model Product {
   store           Store               @relation(fields: [storeId], references: [id])
   saleItems       SaleItem[]
   stockCountItems StockCountItem[]
+  purchaseOrderItems PurchaseOrderItem[]
 
   @@index([companyId, linkedFamilyId])
   @@unique([companyId, sku])
@@ -146,7 +152,8 @@ model Customer {
   updatedAt   DateTime @updatedAt
   company     Company  @relation(fields: [companyId], references: [id])
   store       Store    @relation(fields: [storeId], references: [id])
-
+  sales    Sale[]
+  payments CustomerPayment[]
   @@map("customer")
 }
 
@@ -176,6 +183,8 @@ model Sale {
   store           Store         @relation(fields: [storeId], references: [id])
   user            User          @relation(fields: [userId], references: [id])
   saleItems       SaleItem[]
+  customerId String?   @db.Uuid
+  customer   Customer? @relation(fields: [customerId], references: [id])
 
   voidedAt       DateTime?
   voidReason     String?
@@ -254,7 +263,8 @@ model Supplier {
   createdAt DateTime @default(now())
   company   Company  @relation(fields: [companyId], references: [id])
   store     Store?   @relation(fields: [storeId], references: [id])
-
+  purchaseOrders PurchaseOrder[]
+  expenses Expense[]
   @@map("supplier")
 }
 
@@ -291,7 +301,8 @@ model Expense {
   updatedAt   DateTime @updatedAt
   company     Company  @relation(fields: [companyId], references: [id])
   store       Store    @relation(fields: [storeId], references: [id])
-
+  supplierId String?   @db.Uuid
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
   createdBy User @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
 
   @@map("expense")
@@ -612,3 +623,63 @@ model SupportMessage {
   @@map("support_message")
 }
 
+model PurchaseOrder {
+  id          String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId   String              @db.Uuid
+  storeId     String              @db.Uuid
+  supplierId  String              @db.Uuid
+  status      PurchaseOrderStatus @default(DRAFT)
+  createdById String              @db.Uuid
+  notes       String?
+  createdAt   DateTime            @default(now())
+  sentAt      DateTime?
+  receivedAt  DateTime?
+
+  items     PurchaseOrderItem[]
+  company   Company  @relation(fields: [companyId], references: [id])
+  store     Store    @relation(fields: [storeId], references: [id])
+  supplier  Supplier @relation(fields: [supplierId], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@map("purchase_order")
+}
+
+model PurchaseOrderItem {
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  purchaseOrderId  String  @db.Uuid
+  productId        String  @db.Uuid
+  quantityOrdered  Float
+  quantityReceived Float?
+  unitCost         Float
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  product       Product       @relation(fields: [productId], references: [id])
+
+  @@map("purchase_order_item")
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SENT
+  RECEIVED
+  CANCELLED
+}
+
+model CustomerPayment {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId   String        @db.Uuid
+  storeId     String        @db.Uuid
+  customerId  String        @db.Uuid
+  amount      Float
+  method      PaymentMethod
+  notes       String?
+  createdById String        @db.Uuid
+  createdAt   DateTime      @default(now())
+
+  company   Company  @relation(fields: [companyId], references: [id])
+  store     Store    @relation(fields: [storeId], references: [id])
+  customer  Customer @relation(fields: [customerId], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  @@map("customer_payment")
+}
