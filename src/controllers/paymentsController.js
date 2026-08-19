@@ -9,13 +9,8 @@ export const getPaymentSummary = async (req, res) => {
     startOfDay.setHours(0, 0, 0, 0);
 
     const sales = await prisma.sale.findMany({
-      where: {
-        companyId,
-        storeId,
-        status: "COMPLETED", // excludes voided/refunded/pending — same fix applied everywhere else
-        createdAt: { gte: startOfDay },
-      },
-      select: { totalAmount: true, paymentMethod: true },
+      where: { companyId, storeId, status: "COMPLETED", createdAt: { gte: startOfDay } },
+      include: { payments: true },
     });
 
     let cash = 0, mobile = 0, card = 0, credit = 0, mixed = 0, total = 0;
@@ -23,17 +18,24 @@ export const getPaymentSummary = async (req, res) => {
     sales.forEach((sale) => {
       total += sale.totalAmount;
 
-      switch (sale.paymentMethod) {
-        case "CASH": cash += sale.totalAmount; break;
-        case "MOBILE_MONEY": mobile += sale.totalAmount; break;
-        case "CARD": card += sale.totalAmount; break;
-        case "CREDIT": credit += sale.totalAmount; break;
-        case "MIXED":
-          // A split-payment breakdown isn't actually modeled yet — this is
-          // shown as its own honest bucket rather than a guessed percentage
-          // split, which is what was here before.
-          mixed += sale.totalAmount;
-          break;
+      if (sale.payments && sale.payments.length > 0) {
+        sale.payments.forEach((p) => {
+          switch (p.method) {
+            case "CASH": cash += p.amount; break;
+            case "MOBILE_MONEY": mobile += p.amount; break;
+            case "CARD": card += p.amount; break;
+            case "CREDIT": credit += p.amount; break;
+          }
+        });
+      } else {
+        // Legacy sale from before the payment ledger existed
+        switch (sale.paymentMethod) {
+          case "CASH": cash += sale.totalAmount; break;
+          case "MOBILE_MONEY": mobile += sale.totalAmount; break;
+          case "CARD": card += sale.totalAmount; break;
+          case "CREDIT": credit += sale.totalAmount; break;
+          case "MIXED": mixed += sale.totalAmount; break;
+        }
       }
     });
 
@@ -65,6 +67,7 @@ export const getTransactions = async (req, res) => {
         user: { select: { id: true, name: true } },
         customer: { select: { id: true, name: true } },
         saleItems: true,
+        payments: true,                    // ← added
       },
       orderBy: { createdAt: "desc" },
       take: limit ? Number(limit) : 200,
@@ -98,6 +101,7 @@ export const getTransactionDetail = async (req, res) => {
         user: { select: { id: true, name: true } },
         customer: { select: { id: true, name: true } },
         saleItems: { include: { product: { select: { id: true, name: true } } } },
+        payments: true,                    // ← added
       },
     });
 

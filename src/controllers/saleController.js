@@ -18,20 +18,32 @@ export const createSale = async (req, res) => {
       clientReferenceId = null,
       clientCreatedAt = null,
       customerId = null,
+      payments = null, // optional: [{ method, amount, reference? }]
     } = req.body;
 
     const io = req.app.get("io");
 
     if (!items || items.length === 0) {
-      return res.status(400).json({
-        message: "Cart cannot be empty"
-      });
+      return res.status(400).json({ message: "Cart cannot be empty" });
     }
 
-    if (paymentMethod === "CREDIT" && !customerId) {
-      return res.status(400).json({
-        message: "A customer must be selected for credit sales"
-      });
+    // Validate a split-payment payload if one was given
+    let splitEntries = null;
+    if (payments && Array.isArray(payments) && payments.length > 0) {
+      splitEntries = payments
+        .map((p) => ({ method: p.method, amount: Number(p.amount), reference: p.reference || null }))
+        .filter((p) => p.amount > 0);
+
+      if (splitEntries.length === 0) {
+        return res.status(400).json({ message: "At least one payment line is required" });
+      }
+
+      const hasCreditLine = splitEntries.some((p) => p.method === "CREDIT");
+      if (hasCreditLine && !customerId) {
+        return res.status(400).json({ message: "A customer must be selected for the credit portion of this sale" });
+      }
+    } else if (paymentMethod === "CREDIT" && !customerId) {
+      return res.status(400).json({ message: "A customer must be selected for credit sales" });
     }
 
     let customer = null;
@@ -44,63 +56,57 @@ export const createSale = async (req, res) => {
       }
     }
 
-    // Idempotency check — if this exact client-generated sale was already
-    // created (e.g. an offline queue retrying after the original request's
-    // response got lost), return the existing sale instead of duplicating it.
     if (clientReferenceId) {
       const existing = await prisma.sale.findFirst({
-        where: {
-          companyId: req.context.companyId,
-          clientReferenceId,
-        },
+        where: { companyId: req.context.companyId, clientReferenceId },
         include: { saleItems: true },
       });
-
       if (existing) {
         return res.status(200).json(existing);
       }
     }
 
     const productIds = items.map((item) => item.productId);
-
     const products = await prisma.product.findMany({
-      where: {
-        id: {
-          in: productIds
-        },
-        companyId: req.context.companyId,
-        storeId: req.context.storeId
-      }
+      where: { id: { in: productIds }, companyId: req.context.companyId, storeId: req.context.storeId },
     });
-
     const productMap = new Map(products.map((p) => [p.id, p]));
 
     let subtotal = 0;
-
     for (const item of items) {
       const product = productMap.get(item.productId);
-
-      if (!product) {
-        return res.status(404).json({
-          message: "Product not found"
-        });
-      }
-
+      if (!product) return res.status(404).json({ message: "Product not found" });
       if (product.stockQuantity < item.quantity) {
-        return res.status(400).json({
-          message: `Insufficient stock for ${product.name}`
-        });
+        return res.status(400).json({ message: `Insufficient stock for ${product.name}` });
       }
-
       subtotal += product.sellingPrice * item.quantity;
     }
 
-    // Uganda VAT
     const vatRate = 0.18;
-
     const vatAmount = Math.round(subtotal * vatRate * 100) / 100;
-
     const totalAmount = subtotal + vatAmount - Number(discount);
+
+    // If a split was given, its lines must add up to the real total —
+    // small float tolerance for rounding.
+    if (splitEntries) {
+      const splitSum = splitEntries.reduce((sum, p) => sum + p.amount, 0);
+      if (Math.abs(splitSum - totalAmount) > 1) {
+        return res.status(400).json({
+          message: `Payment lines total UGX ${splitSum.toLocaleString()}, but the sale total is UGX ${totalAmount.toLocaleString()}`,
+        });
+      }
+    }
+
+    // Decide the stored summary label: MIXED only if genuinely more than
+    // one distinct method is actually being used.
+    const distinctMethods = splitEntries ? new Set(splitEntries.map((p) => p.method)) : null;
+    const storedPaymentMethod = splitEntries
+      ? (distinctMethods.size > 1 ? "MIXED" : [...distinctMethods][0])
+      : paymentMethod;
+
+    const creditPortion = splitEntries
+      ? splitEntries.filter((p) => p.method === "CREDIT").reduce((sum, p) => sum + p.amount, 0)
+      : (paymentMethod === "CREDIT" ? totalAmount : 0);
 
     const sale = await prisma.$transaction(async (tx) => {
       const newSale = await tx.sale.create({
@@ -112,13 +118,13 @@ export const createSale = async (req, res) => {
           subtotal,
           vatAmount,
           discount: Number(discount),
-          paymentMethod,
+          paymentMethod: storedPaymentMethod,
           customerId,
           clientReferenceId,
           clientCreatedAt: clientCreatedAt ? new Date(clientCreatedAt) : null,
           fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
-          qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`
-        }
+          qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`,
+        },
       });
 
       const saleItems = [];
@@ -126,7 +132,6 @@ export const createSale = async (req, res) => {
 
       for (const item of items) {
         const product = productMap.get(item.productId);
-
         const itemSubtotal = product.sellingPrice * item.quantity;
 
         saleItems.push({
@@ -134,7 +139,7 @@ export const createSale = async (req, res) => {
           productId: product.id,
           quantity: item.quantity,
           unitPrice: product.sellingPrice,
-          subtotal: itemSubtotal
+          subtotal: itemSubtotal,
         });
 
         movements.push({
@@ -144,33 +149,33 @@ export const createSale = async (req, res) => {
           createdById: req.context.userId,
           type: "SALE",
           quantity: item.quantity,
-          reason: "Sale transaction"
+          reason: "Sale transaction",
         });
 
         await tx.product.update({
-          where: {
-            id: product.id
-          },
-          data: {
-            stockQuantity: {
-              decrement: item.quantity
-            }
-          }
+          where: { id: product.id },
+          data: { stockQuantity: { decrement: item.quantity } },
         });
       }
 
-      await tx.saleItem.createMany({
-        data: saleItems
+      await tx.saleItem.createMany({ data: saleItems });
+      await tx.inventoryMovement.createMany({ data: movements });
+
+      // Real payment ledger — always written, single-method or split.
+      const paymentLines = splitEntries || [{ method: paymentMethod, amount: totalAmount, reference: null }];
+      await tx.salePayment.createMany({
+        data: paymentLines.map((p) => ({
+          saleId: newSale.id,
+          method: p.method,
+          amount: p.amount,
+          reference: p.reference,
+        })),
       });
 
-      await tx.inventoryMovement.createMany({
-        data: movements
-      });
-
-      if (paymentMethod === "CREDIT" && customerId) {
+      if (creditPortion > 0 && customerId) {
         await tx.customer.update({
           where: { id: customerId },
-          data: { totalCredit: { increment: totalAmount } },
+          data: { totalCredit: { increment: creditPortion } },
         });
       }
 
@@ -185,33 +190,20 @@ export const createSale = async (req, res) => {
       entityType: "sale",
       entityId: sale.id,
       metadata: {
-        totalAmount,
-        vatAmount,
-        subtotal,
-        itemCount: items.length,
+        totalAmount, vatAmount, subtotal, itemCount: items.length,
         clientCreatedAt,
-        syncedLate: clientCreatedAt
-          ? (new Date() - new Date(clientCreatedAt)) > 60000
-          : false,
-        customerId,
-        paymentMethod,
-      }
+        syncedLate: clientCreatedAt ? (new Date() - new Date(clientCreatedAt)) > 60000 : false,
+        customerId, paymentMethod: storedPaymentMethod, split: Boolean(splitEntries),
+      },
     });
 
-    // Only check for low stock — the receipt itself already confirms
-    // the sale happened, no need for a redundant notification per sale.
     try {
       await generateLowStockNotifications(req.context.companyId);
     } catch (notifyErr) {
       console.error("Notification error:", notifyErr);
-      // Don't fail the sale if notifications fail
     }
 
-    if (io) {
-      io.emit("sale:completed", {
-        storeId: req.context.storeId
-      });
-    }
+    if (io) io.emit("sale:completed", { storeId: req.context.storeId });
 
     res.status(201).json(sale);
   } catch (error) {
@@ -431,9 +423,9 @@ export const approveSaleAction = async (req, res) => {
     const { id } = req.params;
 
     const sale = await prisma.sale.findFirst({
-      where: { id, companyId: req.context.companyId },
-      include: { saleItems: true },
-    });
+  where: { id, companyId: req.context.companyId },
+  include: { saleItems: true, payments: true },
+});
 
     if (!sale) {
       return res.status(404).json({ message: "Sale not found" });
@@ -465,22 +457,29 @@ export const approveSaleAction = async (req, res) => {
         });
       }
 
-      // A voided/refunded credit sale means the customer no longer owes
-      // for it — reverse the debt exactly as it was applied.
-      if (sale.paymentMethod === "CREDIT" && sale.customerId) {
+      // Reverse only the actual CREDIT portion. Sales created after the
+      // split-payment ledger exists always have real SalePayment rows;
+      // older sales (pre-migration) won't, so fall back to the previous
+      // whole-sale logic for those specifically.
+      let creditToReverse = 0;
+      if (sale.payments && sale.payments.length > 0) {
+        creditToReverse = sale.payments
+          .filter((p) => p.method === "CREDIT")
+          .reduce((sum, p) => sum + p.amount, 0);
+      } else if (sale.paymentMethod === "CREDIT") {
+        creditToReverse = sale.totalAmount;
+      }
+
+      if (creditToReverse > 0 && sale.customerId) {
         await tx.customer.update({
           where: { id: sale.customerId },
-          data: { totalCredit: { decrement: sale.totalAmount } },
+          data: { totalCredit: { decrement: creditToReverse } },
         });
       }
 
       return tx.sale.update({
         where: { id: sale.id },
-        data: {
-          status: finalStatus,
-          voidedAt: new Date(),
-          authorizedById: req.context.userId,
-        },
+        data: { status: finalStatus, voidedAt: new Date(), authorizedById: req.context.userId },
       });
     });
 

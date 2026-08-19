@@ -183,6 +183,7 @@ model Sale {
   store           Store         @relation(fields: [storeId], references: [id])
   user            User          @relation(fields: [userId], references: [id])
   saleItems       SaleItem[]
+  payments SalePayment[]
   customerId String?   @db.Uuid
   customer   Customer? @relation(fields: [customerId], references: [id])
 
@@ -269,22 +270,28 @@ model Supplier {
 }
 
 model Payroll {
-  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  companyId  String        @db.Uuid
-  storeId    String        @db.Uuid
-  userId     String        @db.Uuid
-  month      String
-  salary     Float
-  bonus      Float         @default(0)
-  deductions Float         @default(0)
-  netPay     Float
-  status     PayrollStatus @default(PENDING)
-  notes      String?
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
-  company    Company       @relation(fields: [companyId], references: [id])
-  store      Store         @relation(fields: [storeId], references: [id])
-  user       User          @relation(fields: [userId], references: [id])
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId       String        @db.Uuid
+  storeId         String        @db.Uuid
+  userId          String        @db.Uuid
+  month           String
+  basicSalary     Float
+  allowances      Float         @default(0)
+  bonus           Float         @default(0)
+  grossSalary     Float
+  nssfEmployee    Float         @default(0)
+  nssfEmployer    Float         @default(0)
+  payeTax         Float         @default(0)
+  otherDeductions Float         @default(0)
+  netPay          Float
+  status          PayrollStatus @default(PENDING)
+  paidAt          DateTime?
+  notes           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  company         Company       @relation(fields: [companyId], references: [id])
+  store           Store         @relation(fields: [storeId], references: [id])
+  user            User          @relation(fields: [userId], references: [id])
 
   @@map("payroll")
 }
@@ -682,4 +689,17 @@ model CustomerPayment {
   createdBy User     @relation(fields: [createdById], references: [id])
 
   @@map("customer_payment")
+}
+
+model SalePayment {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  saleId    String        @db.Uuid
+  method    PaymentMethod
+  amount    Float
+  reference String?
+  createdAt DateTime      @default(now())
+
+  sale Sale @relation(fields: [saleId], references: [id])
+
+  @@map("sale_payment")
 }
