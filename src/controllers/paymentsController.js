@@ -54,11 +54,18 @@ export const getTransactions = async (req, res) => {
 
     const where = { companyId, storeId, status: "COMPLETED" };
 
-    if (method) where.paymentMethod = method;
     if (from || to) {
       where.createdAt = {};
       if (from) where.createdAt.gte = new Date(from);
       if (to) where.createdAt.lte = new Date(to);
+    }
+
+    // Filter by real payment lines (for split sales) + legacy paymentMethod
+    if (method && method !== "All") {
+      where.OR = [
+        { paymentMethod: method },              // old single-method sales
+        { payments: { some: { method } } },     // split sales that contain this method
+      ];
     }
 
     const sales = await prisma.sale.findMany({
@@ -67,7 +74,7 @@ export const getTransactions = async (req, res) => {
         user: { select: { id: true, name: true } },
         customer: { select: { id: true, name: true } },
         saleItems: true,
-        payments: true,                    // ← added
+        payments: true,
       },
       orderBy: { createdAt: "desc" },
       take: limit ? Number(limit) : 200,
