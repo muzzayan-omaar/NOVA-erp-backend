@@ -214,7 +214,11 @@ export const getProfitLossReport = async (req, res) => {
     );
     const grossProfit = revenue - cogs;
 
-    const expenseWhere = { companyId, storeId, category: { not: "Supplier Payment" } };
+    const expenseWhere = {
+  companyId, storeId,
+  category: { not: "Supplier Payment" },
+  expenseType: "OPERATING",
+};
     if (hasRange) expenseWhere.createdAt = dateRange;
 
     const expenses = await prisma.expense.findMany({ where: expenseWhere });
@@ -226,22 +230,28 @@ export const getProfitLossReport = async (req, res) => {
     const payroll = await prisma.payroll.findMany({ where: payrollWhere });
     const payrollCost = payroll.reduce((sum, p) => sum + p.netPay, 0);
 
+    const capExWhere = { companyId, storeId, expenseType: "CAPITAL" };
+    if (hasRange) capExWhere.createdAt = dateRange;
+    const capitalExpenses = await prisma.expense.findMany({ where: capExWhere });
+    const capitalSpend = capitalExpenses.reduce((sum, e) => sum + e.amount, 0);
+
     const totalExpenses = operatingExpenses + payrollCost;
     const netProfit = grossProfit - totalExpenses;
 
     res.json({
-      revenue,
-      cogs,
-      grossProfit,
-      operatingExpenses,
-      payrollCost,
-      totalExpenses,
-      netProfit,
-      expenseBreakdown: expenses.reduce((acc, e) => {
-        acc[e.category] = (acc[e.category] || 0) + e.amount;
-        return acc;
-      }, {}),
-    });
+  revenue,
+  cogs,
+  grossProfit,
+  operatingExpenses,
+  payrollCost,
+  totalExpenses,
+  netProfit,
+  capitalSpend,          // ← add this
+  expenseBreakdown: expenses.reduce((acc, e) => {
+    acc[e.category] = (acc[e.category] || 0) + e.amount;
+    return acc;
+  }, {}),
+});
   } catch (err) {
     console.error("PROFIT & LOSS ERROR:", err);
     res.status(500).json({ message: err.message });
@@ -378,6 +388,88 @@ export const getVatSummaryReport = async (req, res) => {
     });
   } catch (err) {
     console.error("VAT SUMMARY ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+/**
+ * SUPPLIER AGING — accounts-payable aging (0-30 / 31-60 / 61-90 / 90+ days).
+ * Reconstructed from real PurchaseOrder receipt dates, with payments
+ * applied FIFO against the oldest outstanding orders first — standard
+ * aging practice, not an estimate.
+ * GET /api/reports/supplier-aging
+ */
+export const getSupplierAgingReport = async (req, res) => {
+  try {
+    const { companyId, storeId } = req.context;
+
+    const suppliers = await prisma.supplier.findMany({
+      where: { companyId, storeId, totalOwed: { gt: 0 } },
+    });
+
+    const today = new Date();
+    const rows = [];
+
+    for (const supplier of suppliers) {
+      const orders = await prisma.purchaseOrder.findMany({
+        where: { companyId, supplierId: supplier.id, status: "RECEIVED" },
+        include: { items: true },
+        orderBy: { receivedAt: "asc" },
+      });
+
+      const payments = await prisma.expense.findMany({
+        where: { companyId, supplierId: supplier.id, category: "Supplier Payment" },
+        orderBy: { createdAt: "asc" },
+      });
+
+      let paidPool = payments.reduce((sum, p) => sum + p.amount, 0);
+
+      const buckets = { current: 0, days31to60: 0, days61to90: 0, days90plus: 0 };
+
+      for (const order of orders) {
+        const orderTotal = order.items.reduce(
+          (sum, i) => sum + (i.quantityReceived || 0) * i.unitCost,
+          0
+        );
+
+        let remaining = orderTotal;
+        if (paidPool > 0) {
+          const applied = Math.min(paidPool, remaining);
+          remaining -= applied;
+          paidPool -= applied;
+        }
+
+        if (remaining <= 0) continue;
+
+        const ageDays = Math.floor((today - new Date(order.receivedAt)) / (1000 * 60 * 60 * 24));
+
+        if (ageDays <= 30) buckets.current += remaining;
+        else if (ageDays <= 60) buckets.days31to60 += remaining;
+        else if (ageDays <= 90) buckets.days61to90 += remaining;
+        else buckets.days90plus += remaining;
+      }
+
+      const totalOwed = buckets.current + buckets.days31to60 + buckets.days61to90 + buckets.days90plus;
+
+      if (totalOwed > 0) {
+        rows.push({ supplierId: supplier.id, supplierName: supplier.name, ...buckets, totalOwed });
+      }
+    }
+
+    const totals = rows.reduce(
+      (acc, r) => ({
+        current: acc.current + r.current,
+        days31to60: acc.days31to60 + r.days31to60,
+        days61to90: acc.days61to90 + r.days61to90,
+        days90plus: acc.days90plus + r.days90plus,
+        totalOwed: acc.totalOwed + r.totalOwed,
+      }),
+      { current: 0, days31to60: 0, days61to90: 0, days90plus: 0, totalOwed: 0 }
+    );
+
+    res.json({ rows, totals });
+  } catch (err) {
+    console.error("SUPPLIER AGING ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 };

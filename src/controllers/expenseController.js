@@ -48,7 +48,7 @@ export const getExpenses = async (req, res) => {
 // CREATE expense
 export const createExpense = async (req, res) => {
   try {
-    const { category, description, amount } = req.body;
+    const { category, description, amount, expenseType } = req.body;
     const { companyId, storeId, userId } = req.context;
 
     if (!category || !amount) {
@@ -56,9 +56,7 @@ export const createExpense = async (req, res) => {
     }
 
     if (!storeId || storeId === "ALL") {
-      return res
-        .status(400)
-        .json({ message: "Select a specific store before recording an expense" });
+      return res.status(400).json({ message: "Select a specific store before recording an expense" });
     }
 
     const expense = await prisma.expense.create({
@@ -69,6 +67,7 @@ export const createExpense = async (req, res) => {
         description,
         amount: Number(amount),
         createdById: userId,
+        expenseType: expenseType === "CAPITAL" ? "CAPITAL" : "OPERATING",
       },
     });
 
@@ -79,7 +78,7 @@ export const createExpense = async (req, res) => {
       action: "EXPENSE_CREATED",
       entityType: "expense",
       entityId: expense.id,
-      metadata: { category, amount: Number(amount), description },
+      metadata: { category, amount: Number(amount), description, expenseType: expense.expenseType },
     });
 
     res.status(201).json(expense);

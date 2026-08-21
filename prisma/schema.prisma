@@ -154,6 +154,7 @@ model Customer {
   store       Store    @relation(fields: [storeId], references: [id])
   sales    Sale[]
   payments CustomerPayment[]
+  creditLimit Float @default(0)
   @@map("customer")
 }
 
@@ -311,7 +312,7 @@ model Expense {
   supplierId String?   @db.Uuid
   supplier   Supplier? @relation(fields: [supplierId], references: [id])
   createdBy User @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
-
+  expenseType ExpenseType @default(OPERATING)
   @@map("expense")
 }
 
@@ -702,4 +703,9 @@ model SalePayment {
   sale Sale @relation(fields: [saleId], references: [id])
 
   @@map("sale_payment")
+}
+
+enum ExpenseType {
+  OPERATING
+  CAPITAL
 }

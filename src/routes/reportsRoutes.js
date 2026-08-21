@@ -11,6 +11,7 @@ import {
   getCashFlowReport,
   getReceivablesPayablesReport,
   getVatSummaryReport,
+  getSupplierAgingReport,
 } from "../controllers/reportsController.js";
 
 const router = express.Router();
@@ -24,5 +25,6 @@ router.get("/profit-loss", getProfitLossReport);
 router.get("/cash-flow", getCashFlowReport);
 router.get("/receivables-payables", getReceivablesPayablesReport);
 router.get("/vat-summary", getVatSummaryReport);
+router.get("/supplier-aging", getSupplierAgingReport);
 
 export default router;

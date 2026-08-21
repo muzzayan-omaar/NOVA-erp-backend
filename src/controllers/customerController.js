@@ -20,11 +20,15 @@ export const getCustomers = async (req, res) => {
 // CREATE customer — totalCredit always starts at 0, never accepted from the client
 export const createCustomer = async (req, res) => {
   try {
-    const { name, phone, email } = req.body;
+    const { name, phone, email, creditLimit } = req.body;
     const { companyId, storeId } = req.context;
 
     const customer = await prisma.customer.create({
-      data: { companyId, storeId, name, phone, email, totalCredit: 0 },
+      data: {
+        companyId, storeId, name, phone, email,
+        totalCredit: 0,
+        creditLimit: Number(creditLimit) || 0,
+      },
     });
 
     res.json(customer);
@@ -39,20 +43,18 @@ export const createCustomer = async (req, res) => {
 export const updateCustomer = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, phone, email } = req.body;
+    const { name, phone, email, creditLimit } = req.body;
     const { companyId, storeId } = req.context;
 
-    const existing = await prisma.customer.findFirst({
-      where: { id, companyId, storeId },
-    });
-
-    if (!existing) {
-      return res.status(404).json({ message: "Customer not found" });
-    }
+    const existing = await prisma.customer.findFirst({ where: { id, companyId, storeId } });
+    if (!existing) return res.status(404).json({ message: "Customer not found" });
 
     const updated = await prisma.customer.update({
       where: { id },
-      data: { name, phone, email },
+      data: {
+        name, phone, email,
+        ...(creditLimit !== undefined && { creditLimit: Number(creditLimit) }),
+      },
     });
 
     res.json(updated);

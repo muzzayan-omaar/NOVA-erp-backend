@@ -9,6 +9,9 @@ import { generateLowStockNotifications } from "../modules/notifications/notifica
 /**
  * CREATE SALE
  */
+/**
+ * CREATE SALE
+ */
 export const createSale = async (req, res) => {
   try {
     const {
@@ -40,7 +43,9 @@ export const createSale = async (req, res) => {
 
       const hasCreditLine = splitEntries.some((p) => p.method === "CREDIT");
       if (hasCreditLine && !customerId) {
-        return res.status(400).json({ message: "A customer must be selected for the credit portion of this sale" });
+        return res.status(400).json({
+          message: "A customer must be selected for the credit portion of this sale",
+        });
       }
     } else if (paymentMethod === "CREDIT" && !customerId) {
       return res.status(400).json({ message: "A customer must be selected for credit sales" });
@@ -49,7 +54,11 @@ export const createSale = async (req, res) => {
     let customer = null;
     if (customerId) {
       customer = await prisma.customer.findFirst({
-        where: { id: customerId, companyId: req.context.companyId, storeId: req.context.storeId },
+        where: {
+          id: customerId,
+          companyId: req.context.companyId,
+          storeId: req.context.storeId,
+        },
       });
       if (!customer) {
         return res.status(404).json({ message: "Customer not found" });
@@ -68,7 +77,11 @@ export const createSale = async (req, res) => {
 
     const productIds = items.map((item) => item.productId);
     const products = await prisma.product.findMany({
-      where: { id: { in: productIds }, companyId: req.context.companyId, storeId: req.context.storeId },
+      where: {
+        id: { in: productIds },
+        companyId: req.context.companyId,
+        storeId: req.context.storeId,
+      },
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
 
@@ -86,8 +99,7 @@ export const createSale = async (req, res) => {
     const vatAmount = Math.round(subtotal * vatRate * 100) / 100;
     const totalAmount = subtotal + vatAmount - Number(discount);
 
-    // If a split was given, its lines must add up to the real total —
-    // small float tolerance for rounding.
+    // If a split was given, its lines must add up to the real total
     if (splitEntries) {
       const splitSum = splitEntries.reduce((sum, p) => sum + p.amount, 0);
       if (Math.abs(splitSum - totalAmount) > 1) {
@@ -97,16 +109,37 @@ export const createSale = async (req, res) => {
       }
     }
 
-    // Decide the stored summary label: MIXED only if genuinely more than
-    // one distinct method is actually being used.
-    const distinctMethods = splitEntries ? new Set(splitEntries.map((p) => p.method)) : null;
-    const storedPaymentMethod = splitEntries
-      ? (distinctMethods.size > 1 ? "MIXED" : [...distinctMethods][0])
-      : paymentMethod;
+    // Credit limit lockout — full CREDIT sales and CREDIT portion of splits
+    const creditPortionForLimitCheck = splitEntries
+      ? splitEntries
+          .filter((p) => p.method === "CREDIT")
+          .reduce((sum, p) => sum + p.amount, 0)
+      : paymentMethod === "CREDIT"
+      ? totalAmount
+      : 0;
 
-    const creditPortion = splitEntries
-      ? splitEntries.filter((p) => p.method === "CREDIT").reduce((sum, p) => sum + p.amount, 0)
-      : (paymentMethod === "CREDIT" ? totalAmount : 0);
+    if (creditPortionForLimitCheck > 0 && customer) {
+      const projectedBalance = customer.totalCredit + creditPortionForLimitCheck;
+
+      if (customer.creditLimit > 0 && projectedBalance > customer.creditLimit) {
+        return res.status(400).json({
+          message: `This would put ${customer.name} at UGX ${projectedBalance.toLocaleString()}, over their credit limit of UGX ${customer.creditLimit.toLocaleString()}.`,
+          currentBalance: customer.totalCredit,
+          creditLimit: customer.creditLimit,
+          requestedAmount: creditPortionForLimitCheck,
+        });
+      }
+    }
+
+    // Decide the stored summary label
+    const distinctMethods = splitEntries
+      ? new Set(splitEntries.map((p) => p.method))
+      : null;
+    const storedPaymentMethod = splitEntries
+      ? distinctMethods.size > 1
+        ? "MIXED"
+        : [...distinctMethods][0]
+      : paymentMethod;
 
     const sale = await prisma.$transaction(async (tx) => {
       const newSale = await tx.sale.create({
@@ -161,8 +194,10 @@ export const createSale = async (req, res) => {
       await tx.saleItem.createMany({ data: saleItems });
       await tx.inventoryMovement.createMany({ data: movements });
 
-      // Real payment ledger — always written, single-method or split.
-      const paymentLines = splitEntries || [{ method: paymentMethod, amount: totalAmount, reference: null }];
+      // Real payment ledger — always written, single-method or split
+      const paymentLines =
+        splitEntries || [{ method: paymentMethod, amount: totalAmount, reference: null }];
+
       await tx.salePayment.createMany({
         data: paymentLines.map((p) => ({
           saleId: newSale.id,
@@ -172,10 +207,11 @@ export const createSale = async (req, res) => {
         })),
       });
 
-      if (creditPortion > 0 && customerId) {
+      // Increment customer credit using the same amount we checked against the limit
+      if (creditPortionForLimitCheck > 0 && customerId) {
         await tx.customer.update({
           where: { id: customerId },
-          data: { totalCredit: { increment: creditPortion } },
+          data: { totalCredit: { increment: creditPortionForLimitCheck } },
         });
       }
 
@@ -190,10 +226,18 @@ export const createSale = async (req, res) => {
       entityType: "sale",
       entityId: sale.id,
       metadata: {
-        totalAmount, vatAmount, subtotal, itemCount: items.length,
+        totalAmount,
+        vatAmount,
+        subtotal,
+        itemCount: items.length,
         clientCreatedAt,
-        syncedLate: clientCreatedAt ? (new Date() - new Date(clientCreatedAt)) > 60000 : false,
-        customerId, paymentMethod: storedPaymentMethod, split: Boolean(splitEntries),
+        syncedLate: clientCreatedAt
+          ? new Date() - new Date(clientCreatedAt) > 60000
+          : false,
+        customerId,
+        paymentMethod: storedPaymentMethod,
+        split: Boolean(splitEntries),
+        creditPortion: creditPortionForLimitCheck,
       },
     });
 

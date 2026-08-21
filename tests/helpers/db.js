@@ -4,25 +4,35 @@ import jwt from "jsonwebtoken";
 
 // Deletes in FK-safe order — children before parents.
 export const resetDb = async () => {
-  await prisma.stockCountItem.deleteMany();
-  await prisma.stockCount.deleteMany();
-  await prisma.expense.deleteMany();
-  await prisma.notification.deleteMany();
+   await prisma.notification.deleteMany();
   await prisma.auditLog.deleteMany();
+
+  await prisma.salePayment.deleteMany();
+  await prisma.customerPayment.deleteMany();
+
   await prisma.saleItem.deleteMany();
   await prisma.sale.deleteMany();
+
   await prisma.inventoryMovement.deleteMany();
+
+  // Stock counts reference products, so delete them BEFORE products
+  await prisma.stockCountItem.deleteMany();
+  await prisma.stockCount.deleteMany();
+
   await prisma.product.deleteMany();
+
+  await prisma.expense.deleteMany();
   await prisma.customer.deleteMany();
   await prisma.supplier.deleteMany();
   await prisma.payroll.deleteMany();
+
   await prisma.user.deleteMany();
   await prisma.store.deleteMany();
 
-  // Join tables & subscription first (FK order)
+  // Join tables & subscription first
   await prisma.subscription.deleteMany();
   await prisma.packageBundle.deleteMany();
-  // await prisma.companyBundle.deleteMany(); // uncomment only if this model exists
+
   await prisma.package.deleteMany();
   await prisma.bundle.deleteMany();
   await prisma.company.deleteMany();
