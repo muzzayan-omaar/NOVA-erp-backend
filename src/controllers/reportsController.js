@@ -473,3 +473,99 @@ export const getSupplierAgingReport = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+/**
+ * REORDER ALERTS — flags products that will run out before a fresh
+ * order (placed today) could realistically arrive, based on real sales
+ * velocity and real supplier lead times reconstructed from PO history.
+ * Products with no purchase-order history are shown separately, honestly,
+ * rather than given a guessed lead time.
+ * GET /api/reports/reorder-alerts
+ */
+export const getReorderAlertsReport = async (req, res) => {
+  try {
+    const { companyId, storeId } = req.context;
+
+    const products = await prisma.product.findMany({
+      where: { companyId, storeId, isActive: true },
+    });
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const recentSaleItems = await prisma.saleItem.findMany({
+      where: {
+        sale: { companyId, storeId, status: "COMPLETED", createdAt: { gte: thirtyDaysAgo } },
+      },
+      select: { productId: true, quantity: true },
+    });
+
+    const salesByProduct = {};
+    recentSaleItems.forEach((si) => {
+      salesByProduct[si.productId] = (salesByProduct[si.productId] || 0) + si.quantity;
+    });
+
+    const receivedOrders = await prisma.purchaseOrder.findMany({
+      where: { companyId, status: "RECEIVED", sentAt: { not: null }, receivedAt: { not: null } },
+      include: { items: true, supplier: { select: { id: true, name: true } } },
+      orderBy: { receivedAt: "desc" },
+    });
+
+    const supplierLeadTimes = {};
+    receivedOrders.forEach((o) => {
+      const days = (new Date(o.receivedAt) - new Date(o.sentAt)) / (1000 * 60 * 60 * 24);
+      if (!supplierLeadTimes[o.supplierId]) {
+        supplierLeadTimes[o.supplierId] = { totalDays: 0, count: 0, name: o.supplier.name };
+      }
+      supplierLeadTimes[o.supplierId].totalDays += days;
+      supplierLeadTimes[o.supplierId].count += 1;
+    });
+
+    const lastSupplierForProduct = {};
+    receivedOrders.forEach((o) => {
+      o.items.forEach((item) => {
+        if (!lastSupplierForProduct[item.productId]) {
+          lastSupplierForProduct[item.productId] = o.supplierId;
+        }
+      });
+    });
+
+    const rows = [];
+    const noHistoryProducts = [];
+
+    products.forEach((p) => {
+      const qtySold = salesByProduct[p.id] || 0;
+      const avgDailySales = qtySold / 30;
+
+      const supplierId = lastSupplierForProduct[p.id];
+      const supplierStats = supplierId ? supplierLeadTimes[supplierId] : null;
+
+      if (!supplierStats || avgDailySales === 0) {
+        noHistoryProducts.push({ id: p.id, name: p.name, stockQuantity: p.stockQuantity });
+        return;
+      }
+
+      const leadTimeDays = supplierStats.totalDays / supplierStats.count;
+      const daysUntilStockout = p.stockQuantity / avgDailySales;
+      const needsReorder = daysUntilStockout <= leadTimeDays;
+
+      rows.push({
+        id: p.id,
+        name: p.name,
+        stockQuantity: p.stockQuantity,
+        avgDailySales: Math.round(avgDailySales * 100) / 100,
+        daysUntilStockout: Math.round(daysUntilStockout * 10) / 10,
+        supplierName: supplierStats.name,
+        leadTimeDays: Math.round(leadTimeDays * 10) / 10,
+        needsReorder,
+      });
+    });
+
+    rows.sort((a, b) => a.daysUntilStockout - b.daysUntilStockout);
+
+    res.json({ rows, noHistoryCount: noHistoryProducts.length, noHistoryProducts });
+  } catch (err) {
+    console.error("REORDER ALERTS ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+};

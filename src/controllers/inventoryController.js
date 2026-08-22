@@ -119,14 +119,15 @@ export const adjustStock = async (req, res) => {
   }
 };
 
+import { createNotification } from "../modules/notifications/notification.service.js";
+
 /**
- * TRANSFER STOCK — supports two modes:
- *   RELOCATE — the whole product record moves to another store
- *   CLONE    — a linked twin at the destination store receives the quantity,
- *              source keeps the rest
+ * DISPATCH TRANSFER — decrements source stock immediately (goods are
+ * physically leaving), but does NOT touch the destination at all yet.
+ * Nothing arrives anywhere until a receive confirms it.
  * POST /api/inventory/transfer
  */
-export const transferStock = async (req, res) => {
+export const dispatchTransfer = async (req, res) => {
   try {
     const { productId, targetStoreId, mode, quantity, reason } = req.body;
     const { companyId, storeId: sourceStoreId, userId } = req.context;
@@ -134,7 +135,6 @@ export const transferStock = async (req, res) => {
     if (!productId || !targetStoreId || !mode) {
       return res.status(400).json({ message: "Product, destination store, and mode are required" });
     }
-
     if (targetStoreId === sourceStoreId) {
       return res.status(400).json({ message: "Choose a different store to transfer to" });
     }
@@ -142,198 +142,247 @@ export const transferStock = async (req, res) => {
     const targetStore = await prisma.store.findFirst({
       where: { id: targetStoreId, companyId, isActive: true },
     });
-    if (!targetStore) {
-      return res.status(404).json({ message: "Destination store not found" });
-    }
+    if (!targetStore) return res.status(404).json({ message: "Destination store not found" });
 
     const source = await prisma.product.findFirst({
       where: { id: productId, companyId, storeId: sourceStoreId },
     });
-    if (!source) {
-      return res.status(404).json({ message: "Product not found in current store" });
+    if (!source) return res.status(404).json({ message: "Product not found in current store" });
+
+    let sentQty;
+    if (mode === "RELOCATE") {
+      sentQty = source.stockQuantity || 0;
+      if (sentQty <= 0) {
+        return res.status(400).json({ message: "Nothing in stock to relocate" });
+      }
+    } else if (mode === "CLONE") {
+      sentQty = Number(quantity);
+      if (!sentQty || sentQty <= 0) {
+        return res.status(400).json({ message: "Enter a quantity to transfer" });
+      }
+      if (sentQty > (source.stockQuantity || 0)) {
+        return res.status(400).json({ message: "Insufficient stock to transfer that quantity" });
+      }
+    } else {
+      return res.status(400).json({ message: "Invalid transfer mode" });
     }
 
-    // ── RELOCATE ──────────────────────────────────────────────────────
-    if (mode === "RELOCATE") {
-      const movedQuantity = source.stockQuantity || 0;
-
-      const result = await prisma.$transaction(async (tx) => {
-        const relocated = await tx.product.update({
-          where: { id: source.id },
-          data: { storeId: targetStoreId },
-        });
-
-        await tx.inventoryMovement.create({
-          data: {
-            companyId,
-            storeId: sourceStoreId,
-            productId: source.id,
-            createdById: userId,
-            type: "TRANSFER_OUT",
-            quantity: movedQuantity,
-            reason: reason || `Relocated to ${targetStore.name}`,
-            sourceStoreId,
-            targetStoreId,
-          },
-        });
-
-        await tx.inventoryMovement.create({
-          data: {
-            companyId,
-            storeId: targetStoreId,
-            productId: source.id,
-            createdById: userId,
-            type: "TRANSFER_IN",
-            quantity: movedQuantity,
-            reason: reason || `Relocated from source store`,
-            sourceStoreId,
-            targetStoreId,
-          },
-        });
-
-        return relocated;
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.product.update({
+        where: { id: source.id },
+        data: { stockQuantity: { decrement: sentQty } },
       });
 
-      await createAuditLog({
-        userId,
-        companyId,
-        storeId: sourceStoreId,
-        action: "PRODUCT_RELOCATED",
-        entityType: "product",
-        entityId: source.id,
-        metadata: {
-          productName: source.name,
-          quantity: movedQuantity,
-          targetStoreId,
-          targetStoreName: targetStore.name,
+      await tx.inventoryMovement.create({
+        data: {
+          companyId, storeId: sourceStoreId, productId: source.id,
+          createdById: userId, type: "TRANSFER_OUT", quantity: sentQty,
+          reason: reason || `Dispatched to ${targetStore.name}`,
+          sourceStoreId, targetStoreId,
         },
       });
 
-      return res.json({ message: "Product relocated", product: result });
-    }
-
-    // ── CLONE (improved: reads outside the transaction) ───────────────
-    if (mode === "CLONE") {
-      const qty = Number(quantity);
-      if (!qty || qty <= 0) {
-        return res.status(400).json({ message: "Quantity is required for this transfer mode" });
-      }
-      if (qty > (source.stockQuantity || 0)) {
-        return res.status(400).json({ message: "Insufficient stock to transfer that quantity" });
-      }
-
-      const familyId = source.linkedFamilyId || source.id;
-
-      // Reads happen BEFORE opening the transaction
-      let twin = await prisma.product.findFirst({
-        where: { companyId, storeId: targetStoreId, linkedFamilyId: familyId },
+      const transit = await tx.stockTransit.create({
+        data: {
+          companyId, sourceStoreId, targetStoreId,
+          productId: source.id, mode, quantitySent: sentQty,
+          reason, dispatchedById: userId,
+        },
       });
 
-      let newSku = null;
-      if (!twin) {
-        const storeSuffix = targetStore.name
-          .replace(/[^a-zA-Z0-9]/g, "")
-          .slice(0, 4)
-          .toUpperCase();
+      return transit;
+    });
 
-        newSku = `${source.sku}-${storeSuffix}`;
-        let attempt = 0;
+    await createAuditLog({
+      userId, companyId, storeId: sourceStoreId,
+      action: "TRANSFER_DISPATCHED",
+      entityType: "stock_transit",
+      entityId: result.id,
+      metadata: { productName: source.name, quantity: sentQty, targetStoreName: targetStore.name, mode },
+    });
 
-        while (await prisma.product.findFirst({ where: { companyId, sku: newSku } })) {
-          attempt += 1;
-          newSku = `${source.sku}-${storeSuffix}${attempt}`;
+    res.status(201).json({ message: "Dispatched — awaiting receipt at destination", transit: result });
+  } catch (error) {
+    console.error("DISPATCH TRANSFER ERROR:", error);
+    res.status(500).json({ message: "Failed to dispatch transfer" });
+  }
+};
+
+/**
+ * GET TRANSITS — both directions for the current store.
+ * GET /api/inventory/transits
+ */
+export const getTransits = async (req, res) => {
+  try {
+    const { companyId, storeId } = req.context;
+    const { status } = req.query;
+
+    const where = {
+      companyId,
+      OR: [{ sourceStoreId: storeId }, { targetStoreId: storeId }],
+    };
+    if (status) where.status = status;
+
+    const transits = await prisma.stockTransit.findMany({
+      where,
+      include: {
+        product: { select: { name: true, sku: true, buyingPrice: true } },
+        sourceStore: { select: { name: true } },
+        targetStore: { select: { name: true } },
+        dispatchedBy: { select: { name: true } },
+        receivedBy: { select: { name: true } },
+      },
+      orderBy: { dispatchedAt: "desc" },
+    });
+
+    res.json(transits);
+  } catch (error) {
+    console.error("GET TRANSITS ERROR:", error);
+    res.status(500).json({ message: "Failed to fetch transits" });
+  }
+};
+
+/**
+ * RECEIVE TRANSFER — only the destination store confirms this. If what
+ * arrived doesn't match what was dispatched, only the real received
+ * amount is credited anywhere — the shortfall is a flagged, valued loss.
+ * POST /api/inventory/transits/:id/receive
+ */
+export const receiveTransfer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quantityReceived } = req.body;
+    const { companyId, storeId, userId } = req.context;
+
+    const transit = await prisma.stockTransit.findFirst({
+      where: { id, companyId, targetStoreId: storeId },
+      include: { product: true, sourceStore: true },
+    });
+
+    if (!transit) return res.status(404).json({ message: "Transit not found for this store" });
+    if (transit.status !== "IN_TRANSIT") {
+      return res.status(400).json({ message: "This transfer has already been resolved" });
+    }
+
+    const received = Number(quantityReceived);
+    if (received == null || received < 0) {
+      return res.status(400).json({ message: "Enter the quantity actually received" });
+    }
+
+    const variance = transit.quantitySent - received;
+    const hasVariance = Math.abs(variance) > 0.001;
+    const finalStatus = hasVariance ? "VARIANCE" : "RECEIVED";
+
+    const result = await prisma.$transaction(async (tx) => {
+      let resultProduct;
+
+      if (transit.mode === "RELOCATE") {
+        resultProduct = await tx.product.update({
+          where: { id: transit.productId },
+          data: { storeId, stockQuantity: received },
+        });
+      } else {
+        const familyId = transit.product.linkedFamilyId || transit.product.id;
+
+        if (!transit.product.linkedFamilyId) {
+          await tx.product.update({ where: { id: transit.product.id }, data: { linkedFamilyId: familyId } });
         }
-      }
 
-      const result = await prisma.$transaction(async (tx) => {
-        if (!source.linkedFamilyId) {
-          await tx.product.update({
-            where: { id: source.id },
-            data: { linkedFamilyId: familyId },
-          });
-        }
-
-        const updatedSource = await tx.product.update({
-          where: { id: source.id },
-          data: { stockQuantity: { decrement: qty } },
+        let twin = await tx.product.findFirst({
+          where: { companyId, storeId, linkedFamilyId: familyId },
         });
 
-        let resolvedTwin;
         if (twin) {
-          resolvedTwin = await tx.product.update({
+          resultProduct = await tx.product.update({
             where: { id: twin.id },
-            data: { stockQuantity: { increment: qty } },
+            data: { stockQuantity: { increment: received } },
           });
-        } else {
-          resolvedTwin = await tx.product.create({
+        } else if (received > 0) {
+          let sku = `${transit.product.sku}-${storeId.slice(0, 4).toUpperCase()}`;
+          let attempt = 0;
+          while (await tx.product.findFirst({ where: { companyId, sku } })) {
+            attempt++;
+            sku = `${transit.product.sku}-${storeId.slice(0, 4).toUpperCase()}${attempt}`;
+          }
+
+          resultProduct = await tx.product.create({
             data: {
-              companyId,
-              storeId: targetStoreId,
-              name: source.name,
-              sku: newSku,
-              barcode: source.barcode,
-              buyingPrice: source.buyingPrice,
-              sellingPrice: source.sellingPrice,
-              unitType: source.unitType,
-              stockQuantity: qty,
+              companyId, storeId,
+              name: transit.product.name, sku,
+              barcode: transit.product.barcode,
+              buyingPrice: transit.product.buyingPrice,
+              sellingPrice: transit.product.sellingPrice,
+              unitType: transit.product.unitType,
+              stockQuantity: received,
               linkedFamilyId: familyId,
             },
           });
         }
+      }
 
+      if (received > 0) {
         await tx.inventoryMovement.create({
           data: {
-            companyId,
-            storeId: sourceStoreId,
-            productId: source.id,
-            createdById: userId,
-            type: "TRANSFER_OUT",
-            quantity: qty,
-            reason: reason || `Transferred to ${targetStore.name}`,
-            sourceStoreId,
-            targetStoreId,
+            companyId, storeId, productId: resultProduct?.id || transit.productId,
+            createdById: userId, type: "TRANSFER_IN", quantity: received,
+            reason: `Received from ${transit.sourceStore.name}${hasVariance ? " (variance flagged)" : ""}`,
+            sourceStoreId: transit.sourceStoreId, targetStoreId: storeId,
           },
         });
+      }
 
-        await tx.inventoryMovement.create({
-          data: {
-            companyId,
-            storeId: targetStoreId,
-            productId: resolvedTwin.id,
-            createdById: userId,
-            type: "TRANSFER_IN",
-            quantity: qty,
-            reason: reason || `Transferred from source store`,
-            sourceStoreId,
-            targetStoreId,
-          },
-        });
-
-        return { updatedSource, twin: resolvedTwin };
-      });
-
-      await createAuditLog({
-        userId,
-        companyId,
-        storeId: sourceStoreId,
-        action: "INVENTORY_TRANSFERRED",
-        entityType: "product",
-        entityId: source.id,
-        metadata: {
-          productName: source.name,
-          quantity: qty,
-          targetStoreId,
-          targetStoreName: targetStore.name,
-          twinProductId: result.twin.id,
+      return tx.stockTransit.update({
+        where: { id },
+        data: {
+          quantityReceived: received,
+          status: finalStatus,
+          receivedById: userId,
+          receivedAt: new Date(),
         },
       });
+    });
 
-      return res.json({ message: "Stock transferred", ...result });
+    const varianceValue = hasVariance ? Math.abs(variance) * (transit.product.buyingPrice || 0) : 0;
+
+    await createAuditLog({
+      userId, companyId, storeId,
+      action: hasVariance ? "TRANSFER_VARIANCE" : "TRANSFER_RECEIVED",
+      entityType: "stock_transit",
+      entityId: id,
+      metadata: {
+        productName: transit.product.name,
+        quantitySent: transit.quantitySent,
+        quantityReceived: received,
+        variance,
+        varianceValue,
+      },
+    });
+
+    if (hasVariance) {
+      const gms = await prisma.user.findMany({
+        where: { companyId, role: "GENERAL_MANAGER", isActive: true },
+        select: { id: true },
+      });
+
+      await Promise.all(
+        gms.map((gm) =>
+          createNotification({
+            companyId,
+            storeId,
+            userId: gm.id,
+            title: "Stock Transfer Variance",
+            message: `${transit.product.name}: dispatched ${transit.quantitySent}, only ${received} arrived — UGX ${varianceValue.toLocaleString()} missing.`,
+            type: "INVENTORY",
+            priority: "HIGH",
+            uniqueKey: `TRANSIT_VARIANCE_${id}`,
+          })
+        )
+      );
     }
 
-    return res.status(400).json({ message: "Invalid transfer mode" });
+    res.json({ message: hasVariance ? "Received with variance flagged" : "Received in full", transit: result, varianceValue });
   } catch (error) {
-    console.error("TRANSFER STOCK ERROR:", error);
-    res.status(500).json({ message: "Failed to transfer stock" });
+    console.error("RECEIVE TRANSFER ERROR:", error);
+    res.status(500).json({ message: "Failed to receive transfer" });
   }
 };

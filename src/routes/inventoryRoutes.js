@@ -4,7 +4,9 @@ import protect from "../middleware/protect.js";
 import {
   getMovements,
   adjustStock,
-  transferStock,
+  dispatchTransfer,
+  getTransits,
+  receiveTransfer,
 } from "../controllers/inventoryController.js";
 import checkPermission from "../middleware/checkPermission.js";
 import checkFeatureAccess from "../middleware/checkFeatureAccess.js";
@@ -33,13 +35,20 @@ router.post(
   checkFeatureAccess("inventory"),
   adjustStock
 );
-
 router.post(
   "/transfer",
   protect,
   checkPermission("inventory"),
   checkFeatureAccess("inventory"),
-  transferStock
+  dispatchTransfer
+);
+router.get("/transits", protect, checkPermission("inventory"), getTransits);
+router.post(
+  "/transits/:id/receive",
+  protect,
+  checkPermission("inventory"),
+  checkFeatureAccess("inventory"),
+  receiveTransfer
 );
 
 export default router;

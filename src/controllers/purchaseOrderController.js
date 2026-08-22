@@ -176,12 +176,12 @@ export const sendPurchaseOrder = async (req, res) => {
 export const receivePurchaseOrder = async (req, res) => {
   try {
     const { id } = req.params;
-    const { items: receivedItems } = req.body;
+    const { items: receivedItems, additionalCosts = 0, additionalCostsNotes } = req.body;
     const { companyId, storeId, userId } = req.context;
 
     const order = await prisma.purchaseOrder.findFirst({
       where: { id, companyId, storeId },
-      include: { items: true, supplier: true },
+      include: { items: { include: { product: true } }, supplier: true },
     });
 
     if (!order) return res.status(404).json({ message: "Purchase order not found" });
@@ -194,16 +194,44 @@ export const receivePurchaseOrder = async (req, res) => {
 
     const receivedMap = new Map((receivedItems || []).map((i) => [i.itemId, Number(i.quantityReceived)]));
 
+    const resolvedItems = order.items.map((item) => {
+      const qty = receivedMap.has(item.id) ? receivedMap.get(item.id) : item.quantityOrdered;
+      return { ...item, qtyReceived: qty, itemValue: qty * item.unitCost };
+    });
+
+    const totalReceivedValue = resolvedItems.reduce((sum, i) => sum + i.itemValue, 0);
+    const extraCost = Number(additionalCosts) || 0;
+
     let orderTotal = 0;
 
     const result = await prisma.$transaction(async (tx) => {
-      for (const item of order.items) {
-        const qty = receivedMap.has(item.id) ? receivedMap.get(item.id) : item.quantityOrdered;
+      for (const item of resolvedItems) {
+        const qty = item.qtyReceived;
 
         if (qty > 0) {
+          // This item's fair share of the shared freight/handling cost,
+          // proportional to how much of the shipment's value it represents.
+          const allocatedShare =
+            totalReceivedValue > 0 ? (item.itemValue / totalReceivedValue) * extraCost : 0;
+          const landedUnitCost = item.unitCost + allocatedShare / qty;
+
+          const existingStock = item.product.stockQuantity || 0;
+          const existingBuyingPrice = item.product.buyingPrice || 0;
+          const newStock = existingStock + qty;
+
+          // Weighted average — blends the true landed cost of this delivery
+          // with whatever cost basis the existing stock already had.
+          const newWeightedBuyingPrice =
+            newStock > 0
+              ? (existingStock * existingBuyingPrice + qty * landedUnitCost) / newStock
+              : landedUnitCost;
+
           await tx.product.update({
             where: { id: item.productId },
-            data: { stockQuantity: { increment: qty } },
+            data: {
+              stockQuantity: newStock,
+              buyingPrice: Math.round(newWeightedBuyingPrice * 100) / 100,
+            },
           });
 
           await tx.inventoryMovement.create({
@@ -213,12 +241,20 @@ export const receivePurchaseOrder = async (req, res) => {
               reason: `Received PO ${order.id.slice(0, 8)} from ${order.supplier.name}`,
             },
           });
-        }
 
-        await tx.purchaseOrderItem.update({
-          where: { id: item.id },
-          data: { quantityReceived: qty },
-        });
+          await tx.purchaseOrderItem.update({
+            where: { id: item.id },
+            data: {
+              quantityReceived: qty,
+              landedUnitCost: Math.round(landedUnitCost * 100) / 100,
+            },
+          });
+        } else {
+          await tx.purchaseOrderItem.update({
+            where: { id: item.id },
+            data: { quantityReceived: qty },
+          });
+        }
 
         orderTotal += qty * item.unitCost;
       }
@@ -228,12 +264,31 @@ export const receivePurchaseOrder = async (req, res) => {
         data: { totalOwed: { increment: orderTotal } },
       });
 
+      let freightExpense = null;
+      if (extraCost > 0) {
+        freightExpense = await tx.expense.create({
+          data: {
+            companyId, storeId,
+            category: "Freight & Logistics",
+            description: additionalCostsNotes || `Freight for order from ${order.supplier.name}`,
+            amount: extraCost,
+            createdById: userId,
+            expenseType: "OPERATING",
+          },
+        });
+      }
+
       const updatedOrder = await tx.purchaseOrder.update({
         where: { id },
-        data: { status: "RECEIVED", receivedAt: new Date() },
+        data: {
+          status: "RECEIVED",
+          receivedAt: new Date(),
+          additionalCosts: extraCost,
+          additionalCostsNotes,
+        },
       });
 
-      return { updatedSupplier, updatedOrder };
+      return { updatedSupplier, updatedOrder, freightExpense };
     });
 
     await createAuditLog({
@@ -241,10 +296,10 @@ export const receivePurchaseOrder = async (req, res) => {
       action: "PURCHASE_ORDER_RECEIVED",
       entityType: "purchase_order",
       entityId: id,
-      metadata: { supplierName: order.supplier.name, orderTotal },
+      metadata: { supplierName: order.supplier.name, orderTotal, additionalCosts: extraCost },
     });
 
-    res.json({ message: "Order received, stock updated", ...result, orderTotal });
+    res.json({ message: "Order received, stock and landed cost updated", ...result, orderTotal });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to receive purchase order" });
