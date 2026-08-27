@@ -111,7 +111,7 @@ model User {
   expensesCreated Expense[] @relation("ExpenseCreatedBy")
 
   stockCountsCreated StockCount[] @relation("StockCountCreatedBy")
-  
+  stockCountsReviewed StockCount[] @relation("StockCountReviewedBy")
   @@unique([companyId, email])
   @@map("user")
 }
@@ -334,6 +334,10 @@ model StockCount {
   store       Store            @relation(fields: [storeId], references: [id])
   createdBy   User             @relation("StockCountCreatedBy", fields: [createdById], references: [id])
 
+
+   rejectionReason String?
+  reviewedById    String?  @db.Uuid
+  reviewedBy      User?    @relation("StockCountReviewedBy", fields: [reviewedById], references: [id])
   @@map("stock_count")
 }
 
@@ -350,10 +354,7 @@ model StockCountItem {
   @@map("stock_count_item")
 }
 
-enum StockCountStatus {
-  OPEN
-  COMPLETED
-}
+
 
 enum PayrollStatus {
   PENDING
@@ -744,4 +745,11 @@ enum StockTransitStatus {
   IN_TRANSIT
   RECEIVED
   VARIANCE
+}
+
+enum StockCountStatus {
+  OPEN
+  PENDING_REVIEW
+  COMPLETED
+  REJECTED
 }

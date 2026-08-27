@@ -17,15 +17,19 @@ export const createStockCount = async (req, res) => {
         .json({ message: "Select a specific store before starting a stock count" });
     }
 
-    // Don't allow two open counts on the same store at once — confusing to reconcile.
-    const existingOpen = await prisma.stockCount.findFirst({
-      where: { companyId, storeId, status: "OPEN" },
+    // Don't allow a second unresolved count on the same store at once —
+    // covers both actively-open counts and ones already awaiting GM review.
+    const existingUnresolved = await prisma.stockCount.findFirst({
+      where: { companyId, storeId, status: { in: ["OPEN", "PENDING_REVIEW"] } },
     });
 
-    if (existingOpen) {
+    if (existingUnresolved) {
       return res.status(400).json({
-        message: "A stock count is already in progress for this store",
-        stockCountId: existingOpen.id,
+        message:
+          existingUnresolved.status === "OPEN"
+            ? "A stock count is already in progress for this store"
+            : "A stock count for this store is already awaiting GM review",
+        stockCountId: existingUnresolved.id,
       });
     }
 
@@ -98,7 +102,6 @@ export const getStockCounts = async (req, res) => {
       orderBy: { createdAt: "desc" },
     });
 
-    // Attach a lightweight summary so the list view doesn't need a second call
     const withSummary = counts.map((c) => {
       const discrepancies = c.items.filter((i) => i.variance !== null && i.variance !== 0);
       const shrinkage = c.items.filter((i) => (i.variance || 0) < 0).length;
@@ -126,6 +129,13 @@ export const getStockCounts = async (req, res) => {
 
 /**
  * GET ONE STOCK COUNT (with items)
+ * While a count is still OPEN, anyone other than a GM gets a blind view —
+ * systemQuantity and variance are stripped so the person physically
+ * counting can't just copy what the system already expects. This is the
+ * honest limit of a software-only blind count: it removes the number from
+ * this screen, it can't stop someone from checking Inventory separately.
+ * Once a count moves to review or beyond, full detail is visible to
+ * everyone with access — nothing stays hidden after the fact.
  * GET /api/stock-counts/:id
  */
 export const getStockCountById = async (req, res) => {
@@ -143,6 +153,7 @@ export const getStockCountById = async (req, res) => {
       include: {
         store: { select: { id: true, name: true } },
         createdBy: { select: { id: true, name: true, role: true } },
+        reviewedBy: { select: { id: true, name: true } },
         items: {
           include: {
             product: {
@@ -157,7 +168,17 @@ export const getStockCountById = async (req, res) => {
       return res.status(404).json({ message: "Stock count not found" });
     }
 
-    res.json(stockCount);
+    const isBlind = role !== "GENERAL_MANAGER" && stockCount.status === "OPEN";
+
+    if (isBlind) {
+      stockCount.items = stockCount.items.map((item) => ({
+        ...item,
+        systemQuantity: null,
+        variance: null,
+      }));
+    }
+
+    res.json({ ...stockCount, isBlind });
   } catch (err) {
     console.error("GET STOCK COUNT ERROR:", err);
     res.status(500).json({ message: "Failed to fetch stock count" });
@@ -166,7 +187,7 @@ export const getStockCountById = async (req, res) => {
 
 /**
  * UPDATE COUNTED QUANTITIES
- * Bulk-save physical counts before completing.
+ * Bulk-save physical counts before submitting for review.
  * PATCH /api/stock-counts/:id/items
  * body: { items: [{ itemId, countedQuantity }] }
  */
@@ -192,7 +213,7 @@ export const updateStockCountItems = async (req, res) => {
     }
 
     if (stockCount.status !== "OPEN") {
-      return res.status(400).json({ message: "This stock count is already completed" });
+      return res.status(400).json({ message: "This stock count is no longer open for counting" });
     }
 
     await Promise.all(
@@ -204,12 +225,19 @@ export const updateStockCountItems = async (req, res) => {
       )
     );
 
+    // Still return the blind shape here too — no reason to leak system
+    // quantities through the save response either.
     const updated = await prisma.stockCount.findFirst({
       where: { id },
       include: { items: { include: { product: true } } },
     });
 
-    res.json(updated);
+    const isBlind = role !== "GENERAL_MANAGER" && updated.status === "OPEN";
+    if (isBlind) {
+      updated.items = updated.items.map((item) => ({ ...item, systemQuantity: null, variance: null }));
+    }
+
+    res.json({ ...updated, isBlind });
   } catch (err) {
     console.error("UPDATE STOCK COUNT ITEMS ERROR:", err);
     res.status(500).json({ message: "Failed to save counts" });
@@ -217,11 +245,13 @@ export const updateStockCountItems = async (req, res) => {
 };
 
 /**
- * COMPLETE STOCK COUNT
- * Locks in variances, applies stock corrections, notifies every GM.
- * POST /api/stock-counts/:id/complete
+ * SUBMIT STOCK COUNT FOR REVIEW
+ * Locks in variances and notifies the GM — but does NOT touch stock or
+ * create any inventory movements yet. Nothing changes on the real ledger
+ * until a GM explicitly approves it.
+ * POST /api/stock-counts/:id/submit
  */
-export const completeStockCount = async (req, res) => {
+export const submitStockCount = async (req, res) => {
   try {
     const { id } = req.params;
     const { companyId, storeId: contextStoreId, role, userId } = req.context;
@@ -233,7 +263,7 @@ export const completeStockCount = async (req, res) => {
 
     const stockCount = await prisma.stockCount.findFirst({
       where,
-      include: { items: { include: { product: true } } },
+      include: { items: { include: { product: true } }, store: true },
     });
 
     if (!stockCount) {
@@ -241,13 +271,13 @@ export const completeStockCount = async (req, res) => {
     }
 
     if (stockCount.status !== "OPEN") {
-      return res.status(400).json({ message: "This stock count is already completed" });
+      return res.status(400).json({ message: "This stock count has already been submitted" });
     }
 
     const uncounted = stockCount.items.filter((i) => i.countedQuantity === null);
     if (uncounted.length > 0) {
       return res.status(400).json({
-        message: `${uncounted.length} item(s) still need a physical count before this can be completed`,
+        message: `${uncounted.length} item(s) still need a physical count before this can be submitted`,
         missingItems: uncounted.map((i) => i.product.name),
       });
     }
@@ -278,6 +308,130 @@ export const completeStockCount = async (req, res) => {
           variance,
           value: varianceValue,
         });
+      }
+
+      await tx.stockCount.update({
+        where: { id: stockCount.id },
+        data: { status: "PENDING_REVIEW" },
+      });
+    });
+
+    await createAuditLog({
+      userId,
+      companyId,
+      storeId: stockCount.storeId,
+      action: "STOCK_COUNT_SUBMITTED",
+      entityType: "stock_count",
+      entityId: stockCount.id,
+      metadata: {
+        totalItems: stockCount.items.length,
+        discrepancyCount: discrepancies.length,
+        totalShrinkageValue,
+        totalOverageValue,
+      },
+    });
+
+    const generalManagers = await prisma.user.findMany({
+      where: { companyId, role: "GENERAL_MANAGER", isActive: true },
+      select: { id: true },
+    });
+
+    await Promise.all(
+      generalManagers.map((gm) =>
+        createNotification({
+          companyId,
+          storeId: stockCount.storeId,
+          userId: gm.id,
+          title: "Stock Count Awaiting Review",
+          message:
+            totalShrinkageValue > 0
+              ? `${stockCount.store.name} — UGX ${totalShrinkageValue.toLocaleString()} in possible missing stock across ${discrepancies.length} item(s). Review before it takes effect.`
+              : `${stockCount.store.name} — stock count submitted with ${discrepancies.length} discrepancy(ies), awaiting your approval.`,
+          type: "INVENTORY",
+          priority: totalShrinkageValue > 0 ? "HIGH" : "MEDIUM",
+          uniqueKey: `STOCK_COUNT_REVIEW_${stockCount.id}`,
+        })
+      )
+    );
+
+    res.json({
+      message: "Submitted for GM review — no stock has changed yet",
+      discrepancyCount: discrepancies.length,
+      totalShrinkageValue,
+      totalOverageValue,
+    });
+  } catch (err) {
+    console.error("SUBMIT STOCK COUNT ERROR:", err);
+    res.status(500).json({ message: "Failed to submit stock count" });
+  }
+};
+
+/**
+ * GET PENDING STOCK COUNTS — GM-only queue.
+ * GET /api/stock-counts/pending/review
+ */
+export const getPendingStockCounts = async (req, res) => {
+  try {
+    const { companyId } = req.context;
+
+    const counts = await prisma.stockCount.findMany({
+      where: { companyId, status: "PENDING_REVIEW" },
+      include: {
+        store: { select: { id: true, name: true } },
+        createdBy: { select: { id: true, name: true, role: true } },
+        items: { include: { product: { select: { name: true, buyingPrice: true } } } },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const shaped = counts.map((c) => {
+      const discrepancies = c.items.filter((i) => i.variance !== 0);
+      const shrinkageValue = c.items
+        .filter((i) => i.variance < 0)
+        .reduce((sum, i) => sum + Math.abs(i.variance) * (i.product.buyingPrice || 0), 0);
+
+      return {
+        id: c.id,
+        store: c.store,
+        createdBy: c.createdBy,
+        createdAt: c.createdAt,
+        discrepancyCount: discrepancies.length,
+        shrinkageValue,
+        items: c.items,
+      };
+    });
+
+    res.json(shaped);
+  } catch (err) {
+    console.error("GET PENDING STOCK COUNTS ERROR:", err);
+    res.status(500).json({ message: "Failed to fetch pending stock counts" });
+  }
+};
+
+/**
+ * APPROVE STOCK COUNT — GM only. This is the moment the real ledger
+ * finally changes: stock corrections and inventory movements are only
+ * created now, not at submission time.
+ * POST /api/stock-counts/:id/approve
+ */
+export const approveStockCount = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { companyId, userId } = req.context;
+
+    const stockCount = await prisma.stockCount.findFirst({
+      where: { id, companyId },
+      include: { items: { include: { product: true } } },
+    });
+
+    if (!stockCount) return res.status(404).json({ message: "Stock count not found" });
+    if (stockCount.status !== "PENDING_REVIEW") {
+      return res.status(400).json({ message: "This stock count is not awaiting review" });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const item of stockCount.items) {
+        if (item.variance === 0 || item.variance === null) continue;
 
         await tx.product.update({
           where: { id: item.productId },
@@ -292,14 +446,14 @@ export const completeStockCount = async (req, res) => {
             createdById: userId,
             type: "ADJUSTMENT",
             quantity: item.countedQuantity,
-            reason: `Stock count reconciliation (count ${stockCount.id.slice(0, 8)})`,
+            reason: `Stock count reconciliation (count ${stockCount.id.slice(0, 8)}), approved`,
           },
         });
       }
 
       await tx.stockCount.update({
         where: { id: stockCount.id },
-        data: { status: "COMPLETED", completedAt: new Date() },
+        data: { status: "COMPLETED", completedAt: new Date(), reviewedById: userId },
       });
     });
 
@@ -307,54 +461,60 @@ export const completeStockCount = async (req, res) => {
       userId,
       companyId,
       storeId: stockCount.storeId,
-      action: "STOCK_COUNT_COMPLETED",
+      action: "STOCK_COUNT_APPROVED",
       entityType: "stock_count",
       entityId: stockCount.id,
-      metadata: {
-        totalItems: stockCount.items.length,
-        discrepancyCount: discrepancies.length,
-        totalShrinkageValue,
-        totalOverageValue,
-        topDiscrepancies: discrepancies.sort((a, b) => a.value - b.value).slice(0, 5),
+      metadata: { itemCount: stockCount.items.length },
+    });
+
+    res.json({ message: "Stock count approved — corrections applied" });
+  } catch (err) {
+    console.error("APPROVE STOCK COUNT ERROR:", err);
+    res.status(500).json({ message: "Failed to approve stock count" });
+  }
+};
+
+/**
+ * REJECT STOCK COUNT — GM only. Nothing on the real ledger is ever
+ * touched; a rejected count simply requires a fresh recount if needed.
+ * POST /api/stock-counts/:id/reject
+ * body: { rejectionReason }
+ */
+export const rejectStockCount = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rejectionReason } = req.body;
+    const { companyId, userId } = req.context;
+
+    const stockCount = await prisma.stockCount.findFirst({ where: { id, companyId } });
+    if (!stockCount) return res.status(404).json({ message: "Stock count not found" });
+    if (stockCount.status !== "PENDING_REVIEW") {
+      return res.status(400).json({ message: "This stock count is not awaiting review" });
+    }
+
+    await prisma.stockCount.update({
+      where: { id },
+      data: {
+        status: "REJECTED",
+        rejectionReason,
+        reviewedById: userId,
+        completedAt: new Date(),
       },
     });
 
-    // Alert every GM — shrinkage is the actual theft signal here.
-    if (discrepancies.length > 0) {
-      const generalManagers = await prisma.user.findMany({
-        where: { companyId, role: "GENERAL_MANAGER", isActive: true },
-        select: { id: true },
-      });
-
-      const store = await prisma.store.findUnique({ where: { id: stockCount.storeId } });
-
-      await Promise.all(
-        generalManagers.map((gm) =>
-          createNotification({
-            companyId,
-            storeId: stockCount.storeId,
-            userId: gm.id,
-            title: totalShrinkageValue > 0 ? "Stock Shrinkage Detected" : "Stock Count Completed",
-            message:
-              totalShrinkageValue > 0
-                ? `${store?.name || "A store"} — UGX ${totalShrinkageValue.toLocaleString()} in missing stock found across ${discrepancies.length} item(s).`
-                : `${store?.name || "A store"} — stock count completed with ${discrepancies.length} discrepancy(ies).`,
-            type: "INVENTORY",
-            priority: totalShrinkageValue > 0 ? "HIGH" : "MEDIUM",
-            uniqueKey: `STOCK_COUNT_${stockCount.id}`,
-          })
-        )
-      );
-    }
-
-    res.json({
-      message: "Stock count completed",
-      discrepancies,
-      totalShrinkageValue,
-      totalOverageValue,
+    await createAuditLog({
+      userId,
+      companyId,
+      storeId: stockCount.storeId,
+      action: "STOCK_COUNT_REJECTED",
+      entityType: "stock_count",
+      entityId: id,
+      metadata: { rejectionReason },
     });
+
+    res.json({ message: "Stock count rejected — no changes were made to stock" });
   } catch (err) {
-    console.error("COMPLETE STOCK COUNT ERROR:", err);
-    res.status(500).json({ message: "Failed to complete stock count" });
+    console.error("REJECT STOCK COUNT ERROR:", err);
+    res.status(500).json({ message: "Failed to reject stock count" });
   }
 };
