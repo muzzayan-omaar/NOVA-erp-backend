@@ -24,6 +24,7 @@ import platformAuthRoutes from "./routes/platformAuthRoutes.js";
 import catalogRoutes from "./routes/catalogRoutes.js";
 import purchaseOrderRoutes from "./routes/purchaseOrderRoutes.js";
 import supportRoutes from "./routes/supportRoutes.js";
+import quoteRoutes from "./routes/quoteRoutes.js";
 
 import notificationRoutes from "./modules/notifications/notification.routes.js";
 import { notFoundHandler, errorHandler } from "./middleware/errorHandler.js";
@@ -71,6 +72,7 @@ app.use("/api/catalog", catalogRoutes);
 app.use("/api/support", supportRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/purchase-orders", purchaseOrderRoutes);
+app.use("/api/quotes", quoteRoutes);
 app.use(notFoundHandler);
 app.use(errorHandler);
 export default app;

@@ -41,6 +41,7 @@ model Company {
   payments     Payment[]
   bundles CompanyBundle[]
   purchaseOrders PurchaseOrder[]
+  quotes Quote[]
   
   @@map("company")
 }
@@ -72,6 +73,7 @@ model Store {
   stockCounts        StockCount[]
   purchaseOrders PurchaseOrder[]
   customerPayments CustomerPayment[]
+  quotes Quote[]
   outgoingTransits StockTransit[] @relation("TransitSource")
   incomingTransits StockTransit[] @relation("TransitTarget")
 
@@ -98,6 +100,7 @@ model User {
   supportMessages SupportMessage[]
   purchaseOrders PurchaseOrder[]
   customerPayments CustomerPayment[]
+  quotes Quote[]
   isPlatformAdmin   Boolean   @default(false)
   mustChangePassword Boolean @default(false)
   paymentsSubmitted Payment[] @relation("PaymentSubmittedBy")
@@ -135,6 +138,7 @@ model Product {
   company         Company             @relation(fields: [companyId], references: [id])
   store           Store               @relation(fields: [storeId], references: [id])
   saleItems       SaleItem[]
+  quoteItems QuoteItem[]
   stockCountItems StockCountItem[]
   purchaseOrderItems PurchaseOrderItem[]
   stockTransits StockTransit[]
@@ -157,6 +161,7 @@ model Customer {
   company     Company  @relation(fields: [companyId], references: [id])
   store       Store    @relation(fields: [storeId], references: [id])
   sales    Sale[]
+  quotes Quote[]
   payments CustomerPayment[]
   creditLimit Float @default(0)
   @@map("customer")
@@ -179,6 +184,7 @@ model Sale {
   updatedAt       DateTime      @updatedAt
   receiptNumber   String?
   invoiceNumber   String?
+  quote Quote?
   requestedAt     DateTime?
   rejectionReason String?
   clientReferenceId String?
@@ -754,4 +760,52 @@ enum StockCountStatus {
   PENDING_REVIEW
   COMPLETED
   REJECTED
+}
+
+model Quote {
+  id              String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId       String      @db.Uuid
+  storeId         String      @db.Uuid
+  userId          String      @db.Uuid
+  customerId      String?     @db.Uuid
+  status          QuoteStatus @default(DRAFT)
+  subtotal        Float
+  vatAmount       Float
+  totalAmount     Float
+  notes           String?
+  validUntil      DateTime?
+  convertedSaleId String?     @unique @db.Uuid
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  items         QuoteItem[]
+  company       Company  @relation(fields: [companyId], references: [id])
+  store         Store    @relation(fields: [storeId], references: [id])
+  user          User     @relation(fields: [userId], references: [id])
+  customer      Customer? @relation(fields: [customerId], references: [id])
+  convertedSale Sale?    @relation(fields: [convertedSaleId], references: [id])
+
+  @@map("quote")
+}
+
+model QuoteItem {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quoteId   String  @db.Uuid
+  productId String  @db.Uuid
+  quantity  Float
+  unitPrice Float
+  subtotal  Float
+
+  quote   Quote   @relation(fields: [quoteId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("quote_item")
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  CONVERTED
+  EXPIRED
+  CANCELLED
 }
