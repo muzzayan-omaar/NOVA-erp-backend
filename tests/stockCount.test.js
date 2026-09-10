@@ -41,21 +41,21 @@ describe("Stock Count", () => {
     expect(res.body.stockCountId).toBeDefined();
   });
 
-  it("rejects completion while any item is still uncounted", async () => {
+  it("rejects submission while any item is still uncounted", async () => {
     const created = await request(app)
       .post("/api/stock-counts")
       .set(authHeader(ctx.branchManager))
       .send({});
 
     const res = await request(app)
-      .post(`/api/stock-counts/${created.body.id}/complete`)
+      .post(`/api/stock-counts/${created.body.id}/submit`)
       .set(authHeader(ctx.branchManager));
 
     expect(res.status).toBe(400);
     expect(res.body.missingItems).toContain("Test Product");
   });
 
-  it("completing applies stock correction and reports shrinkage value", async () => {
+  it("submit + approve applies stock correction and reports shrinkage value", async () => {
     const created = await request(app)
       .post("/api/stock-counts")
       .set(authHeader(ctx.branchManager))
@@ -69,17 +69,28 @@ describe("Stock Count", () => {
       .set(authHeader(ctx.branchManager))
       .send({ items: [{ itemId, countedQuantity: 45 }] });
 
-    const res = await request(app)
-      .post(`/api/stock-counts/${created.body.id}/complete`)
+    // 1. Branch manager submits for GM review
+    const submitRes = await request(app)
+      .post(`/api/stock-counts/${created.body.id}/submit`)
       .set(authHeader(ctx.branchManager));
 
-    expect(res.status).toBe(200);
-    expect(res.body.discrepancies).toHaveLength(1);
-    expect(res.body.discrepancies[0].variance).toBe(-5);
-    expect(res.body.totalShrinkageValue).toBe(5000); // 5 units x buyingPrice 1000
+    expect(submitRes.status).toBe(200);
+    expect(submitRes.body.discrepancyCount).toBe(1);
+    expect(submitRes.body.totalShrinkageValue).toBe(5000); // 5 units × buyingPrice 1000
 
-    const product = await prisma.product.findUnique({ where: { id: ctx.product.id } });
-    expect(product.stockQuantity).toBe(45); // corrected to match physical count
+    // Stock must NOT have changed yet — only GM approval touches the ledger
+    let product = await prisma.product.findUnique({ where: { id: ctx.product.id } });
+    expect(product.stockQuantity).toBe(50);
+
+    // 2. GM approves → stock is corrected
+    const approveRes = await request(app)
+      .post(`/api/stock-counts/${created.body.id}/approve`)
+      .set(authHeader(ctx.gm));
+
+    expect(approveRes.status).toBe(200);
+
+    product = await prisma.product.findUnique({ where: { id: ctx.product.id } });
+    expect(product.stockQuantity).toBe(45);
 
     const movement = await prisma.inventoryMovement.findFirst({
       where: { productId: ctx.product.id, type: "ADJUSTMENT" },

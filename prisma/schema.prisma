@@ -339,6 +339,8 @@ model StockCount {
   reviewedById    String?  @db.Uuid
   reviewedBy      User?    @relation("StockCountReviewedBy", fields: [reviewedById], references: [id])
   @@map("stock_count")
+
+  
 }
 
 model StockCountItem {
