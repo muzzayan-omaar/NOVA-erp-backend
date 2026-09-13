@@ -7,7 +7,7 @@ const VAT_RATE = 0.18;
 // CREATE QUOTE — a pro-forma, no stock touched, no fiscal receipt
 export const createQuote = async (req, res) => {
   try {
-    const { customerId, items, notes, validUntil } = req.body;
+    const { customerId, items, notes, validUntil, projectId } = req.body;
     const { companyId, storeId, userId } = req.context;
 
     if (!Array.isArray(items) || items.length === 0) {
@@ -39,8 +39,14 @@ export const createQuote = async (req, res) => {
 
     const quote = await prisma.quote.create({
       data: {
-        companyId, storeId, userId, customerId,
-        subtotal, vatAmount, totalAmount,
+        companyId,
+        storeId,
+        userId,
+        customerId,
+        projectId: projectId || null,
+        subtotal,
+        vatAmount,
+        totalAmount,
         notes,
         validUntil: validUntil ? new Date(validUntil) : null,
         items: { create: quoteItems },
@@ -49,7 +55,9 @@ export const createQuote = async (req, res) => {
     });
 
     await createAuditLog({
-      userId, companyId, storeId,
+      userId,
+      companyId,
+      storeId,
       action: "QUOTE_CREATED",
       entityType: "quote",
       entityId: quote.id,
@@ -68,7 +76,6 @@ export const getQuotes = async (req, res) => {
   try {
     const { companyId, storeId } = req.context;
     const { status } = req.query;
-
     const where = { companyId, storeId };
     if (status) where.status = status;
 
@@ -77,7 +84,6 @@ export const getQuotes = async (req, res) => {
       include: { customer: true, user: { select: { name: true } }, items: true },
       orderBy: { createdAt: "desc" },
     });
-
     res.json(quotes);
   } catch (err) {
     console.error(err);
@@ -99,7 +105,6 @@ export const getQuoteDetail = async (req, res) => {
         items: { include: { product: true } },
       },
     });
-
     if (!quote) return res.status(404).json({ message: "Quote not found" });
     res.json(quote);
   } catch (err) {
@@ -146,6 +151,7 @@ export const updateQuote = async (req, res) => {
       const vatAmount = Math.round(subtotal * VAT_RATE * 100) / 100;
 
       await prisma.quoteItem.deleteMany({ where: { quoteId: id } });
+
       updateData = {
         ...updateData,
         subtotal,
@@ -162,7 +168,9 @@ export const updateQuote = async (req, res) => {
     });
 
     await createAuditLog({
-      userId, companyId, storeId,
+      userId,
+      companyId,
+      storeId,
       action: "QUOTE_UPDATED",
       entityType: "quote",
       entityId: id,
@@ -186,17 +194,18 @@ export const sendQuote = async (req, res) => {
       where: { id, companyId, storeId },
       include: { items: { include: { product: true } }, customer: true },
     });
-
     if (!quote) return res.status(404).json({ message: "Quote not found" });
     if (quote.status !== "DRAFT") {
       return res.status(400).json({ message: `Quote is already ${quote.status}` });
     }
 
     let emailResult = { sent: false, reason: "NO_CUSTOMER_EMAIL" };
-
     if (quote.customer?.email) {
       const rows = quote.items
-        .map((i) => `<tr><td>${i.product.name}</td><td>${i.quantity}</td><td>UGX ${i.unitPrice.toLocaleString()}</td></tr>`)
+        .map(
+          (i) =>
+            `<tr><td>${i.product.name}</td><td>${i.quantity}</td><td>UGX ${i.unitPrice.toLocaleString()}</td></tr>`
+        )
         .join("");
 
       emailResult = await sendEmail({
@@ -220,7 +229,9 @@ export const sendQuote = async (req, res) => {
     const updated = await prisma.quote.update({ where: { id }, data: { status: "SENT" } });
 
     await createAuditLog({
-      userId, companyId, storeId,
+      userId,
+      companyId,
+      storeId,
       action: "QUOTE_SENT",
       entityType: "quote",
       entityId: id,
@@ -249,7 +260,9 @@ export const cancelQuote = async (req, res) => {
     const updated = await prisma.quote.update({ where: { id }, data: { status: "CANCELLED" } });
 
     await createAuditLog({
-      userId, companyId, storeId,
+      userId,
+      companyId,
+      storeId,
       action: "QUOTE_CANCELLED",
       entityType: "quote",
       entityId: id,
@@ -278,7 +291,6 @@ export const convertQuote = async (req, res) => {
       where: { id, companyId, storeId },
       include: { items: { include: { product: true } }, customer: true },
     });
-
     if (!quote) return res.status(404).json({ message: "Quote not found" });
     if (quote.status === "CONVERTED") {
       return res.status(400).json({ message: "This quote has already been converted" });
@@ -287,23 +299,22 @@ export const convertQuote = async (req, res) => {
       return res.status(400).json({ message: "This quote was cancelled" });
     }
 
-    
     // Re-validate stock at conversion time (single query)
-const productIds = quote.items.map((i) => i.productId);
-const currentProducts = await prisma.product.findMany({
-  where: { id: { in: productIds } },
-  select: { id: true, stockQuantity: true, name: true },
-});
-const stockMap = new Map(currentProducts.map((p) => [p.id, p]));
-
-for (const item of quote.items) {
-  const current = stockMap.get(item.productId);
-  if (!current || current.stockQuantity < item.quantity) {
-    return res.status(400).json({
-      message: `Insufficient stock for ${item.product.name} — available: ${current?.stockQuantity ?? 0}, needed: ${item.quantity}`,
+    const productIds = quote.items.map((i) => i.productId);
+    const currentProducts = await prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, stockQuantity: true, name: true },
     });
-  }
-}
+    const stockMap = new Map(currentProducts.map((p) => [p.id, p]));
+
+    for (const item of quote.items) {
+      const current = stockMap.get(item.productId);
+      if (!current || current.stockQuantity < item.quantity) {
+        return res.status(400).json({
+          message: `Insufficient stock for ${item.product.name} — available: ${current?.stockQuantity ?? 0}, needed: ${item.quantity}`,
+        });
+      }
+    }
 
     let splitEntries = null;
     if (payments && Array.isArray(payments) && payments.length > 0) {
@@ -321,7 +332,9 @@ for (const item of quote.items) {
 
     const creditPortion = splitEntries
       ? splitEntries.filter((p) => p.method === "CREDIT").reduce((sum, p) => sum + p.amount, 0)
-      : (paymentMethod === "CREDIT" ? quote.totalAmount : 0);
+      : paymentMethod === "CREDIT"
+        ? quote.totalAmount
+        : 0;
 
     if (creditPortion > 0) {
       if (!quote.customerId) {
@@ -339,90 +352,98 @@ for (const item of quote.items) {
 
     const distinctMethods = splitEntries ? new Set(splitEntries.map((p) => p.method)) : null;
     const storedPaymentMethod = splitEntries
-      ? (distinctMethods.size > 1 ? "MIXED" : [...distinctMethods][0])
+      ? distinctMethods.size > 1
+        ? "MIXED"
+        : [...distinctMethods][0]
       : paymentMethod;
 
-    const sale = await prisma.$transaction(async (tx) => {
-  const newSale = await tx.sale.create({
-    data: {
-      companyId,
-      storeId,
-      userId,
-      totalAmount: quote.totalAmount,
-      subtotal: quote.subtotal,
-      vatAmount: quote.vatAmount,
-      discount: 0,
-      paymentMethod: storedPaymentMethod,
-      customerId: quote.customerId,
-      clientReferenceId,
-      fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
-      qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`,
-    },
-  });
+    const sale = await prisma.$transaction(
+      async (tx) => {
+        const newSale = await tx.sale.create({
+          data: {
+            companyId,
+            storeId,
+            userId,
+            totalAmount: quote.totalAmount,
+            subtotal: quote.subtotal,
+            vatAmount: quote.vatAmount,
+            discount: 0,
+            paymentMethod: storedPaymentMethod,
+            customerId: quote.customerId,
+            projectId: quote.projectId, // ← carried through from the quote
+            clientReferenceId,
+            fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
+            qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`,
+          },
+        });
 
-  const saleItems = quote.items.map((item) => ({
-    saleId: newSale.id,
-    productId: item.productId,
-    quantity: item.quantity,
-    unitPrice: item.unitPrice,
-    subtotal: item.subtotal,
-  }));
+        const saleItems = quote.items.map((item) => ({
+          saleId: newSale.id,
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          subtotal: item.subtotal,
+        }));
 
-  const movements = quote.items.map((item) => ({
-    companyId,
-    storeId,
-    productId: item.productId,
-    createdById: userId,
-    type: "SALE",
-    quantity: item.quantity,
-    reason: `Converted from quote ${quote.id.slice(0, 8)}`,
-  }));
+        const movements = quote.items.map((item) => ({
+          companyId,
+          storeId,
+          productId: item.productId,
+          createdById: userId,
+          type: "SALE",
+          quantity: item.quantity,
+          reason: `Converted from quote ${quote.id.slice(0, 8)}`,
+        }));
 
-  // Run all stock decrements in parallel instead of sequentially
-  await Promise.all(
-    quote.items.map((item) =>
-      tx.product.update({
-        where: { id: item.productId },
-        data: { stockQuantity: { decrement: item.quantity } },
-      })
-    )
-  );
+        // Run all stock decrements in parallel instead of sequentially
+        await Promise.all(
+          quote.items.map((item) =>
+            tx.product.update({
+              where: { id: item.productId },
+              data: { stockQuantity: { decrement: item.quantity } },
+            })
+          )
+        );
 
-  await tx.saleItem.createMany({ data: saleItems });
-  await tx.inventoryMovement.createMany({ data: movements });
+        await tx.saleItem.createMany({ data: saleItems });
+        await tx.inventoryMovement.createMany({ data: movements });
 
-  const paymentLines =
-    splitEntries || [{ method: paymentMethod, amount: quote.totalAmount, reference: null }];
+        const paymentLines =
+          splitEntries || [{ method: paymentMethod, amount: quote.totalAmount, reference: null }];
 
-  await tx.salePayment.createMany({
-    data: paymentLines.map((p) => ({
-      saleId: newSale.id,
-      method: p.method,
-      amount: p.amount,
-      reference: p.reference,
-    })),
-  });
+        await tx.salePayment.createMany({
+          data: paymentLines.map((p) => ({
+            saleId: newSale.id,
+            method: p.method,
+            amount: p.amount,
+            reference: p.reference,
+          })),
+        });
 
-  if (creditPortion > 0 && quote.customerId) {
-    await tx.customer.update({
-      where: { id: quote.customerId },
-      data: { totalCredit: { increment: creditPortion } },
-    });
-  }
+        if (creditPortion > 0 && quote.customerId) {
+          await tx.customer.update({
+            where: { id: quote.customerId },
+            data: { totalCredit: { increment: creditPortion } },
+          });
+        }
 
-  await tx.quote.update({
-    where: { id: quote.id },
-    data: { status: "CONVERTED", convertedSaleId: newSale.id },
-  });
+        await tx.quote.update({
+          where: { id: quote.id },
+          data: { status: "CONVERTED", convertedSaleId: newSale.id },
+        });
 
-  return newSale;
-}, {
-  maxWait: 10000,   // how long to wait to acquire the transaction
-  timeout: 20000,   // how long the transaction itself may run
-});
+        return newSale;
+      },
+      {
+        maxWait: 10000,
+        timeout: 20000,
+      }
+    );
 
     await createAuditLog({
-      userId, companyId, storeId,
+      userId,
+      companyId,
+      storeId,
       action: "QUOTE_CONVERTED",
       entityType: "quote",
       entityId: quote.id,

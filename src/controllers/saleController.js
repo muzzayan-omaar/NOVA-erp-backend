@@ -9,9 +9,6 @@ import { generateLowStockNotifications } from "../modules/notifications/notifica
 /**
  * CREATE SALE
  */
-/**
- * CREATE SALE
- */
 export const createSale = async (req, res) => {
   try {
     const {
@@ -22,6 +19,7 @@ export const createSale = async (req, res) => {
       clientCreatedAt = null,
       customerId = null,
       payments = null, // optional: [{ method, amount, reference? }]
+      projectId = null,
     } = req.body;
 
     const io = req.app.get("io");
@@ -51,7 +49,7 @@ export const createSale = async (req, res) => {
       return res.status(400).json({ message: "A customer must be selected for credit sales" });
     }
 
-    let customer = null;
+       let customer = null;
     if (customerId) {
       customer = await prisma.customer.findFirst({
         where: {
@@ -64,6 +62,24 @@ export const createSale = async (req, res) => {
         return res.status(404).json({ message: "Customer not found" });
       }
     }
+
+    // Project can only be tagged when a customer is selected
+    if (projectId) {
+      if (!customerId) {
+        return res.status(400).json({
+          message: "A project can only be tagged when a customer is selected",
+        });
+      }
+      const project = await prisma.customerProject.findFirst({
+        where: { id: projectId, customerId },
+      });
+      if (!project) {
+        return res.status(404).json({
+          message: "Project not found for this customer",
+        });
+      }
+    }
+    
 
     if (clientReferenceId) {
       const existing = await prisma.sale.findFirst({
@@ -154,6 +170,7 @@ export const createSale = async (req, res) => {
             discount: Number(discount),
             paymentMethod: storedPaymentMethod,
             customerId,
+            projectId,
             clientReferenceId,
             clientCreatedAt: clientCreatedAt ? new Date(clientCreatedAt) : null,
             fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
@@ -247,6 +264,7 @@ export const createSale = async (req, res) => {
           ? new Date() - new Date(clientCreatedAt) > 60000
           : false,
         customerId,
+        projectId,
         paymentMethod: storedPaymentMethod,
         split: Boolean(splitEntries),
         creditPortion: creditPortionForLimitCheck,

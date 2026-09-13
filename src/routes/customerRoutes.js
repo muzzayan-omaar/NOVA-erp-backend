@@ -6,6 +6,9 @@ import {
   deleteCustomer,
   getCustomerDetail,
   recordCustomerPayment,
+    getCustomerProjects,
+  createCustomerProject,
+  updateCustomerProject,
 } from "../controllers/customerController.js";
 
 import protect from "../middleware/protect.js";
@@ -30,5 +33,9 @@ router.post("/:id/pay", checkPermission("customers"), recordCustomerPayment);
 // Deletion can erase a customer's whole credit history — same reasoning
 // as expense deletion being GM-only.
 router.delete("/:id", checkPermission("audit"), deleteCustomer);
+
+router.get("/:customerId/projects", checkPermission("customers"), getCustomerProjects);
+router.post("/:customerId/projects", checkPermission("customers"), createCustomerProject);
+router.patch("/:customerId/projects/:id", checkPermission("customers"), updateCustomerProject);
 
 export default router;

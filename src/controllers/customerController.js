@@ -93,31 +93,51 @@ export const getCustomerDetail = async (req, res) => {
     const { id } = req.params;
     const { companyId, storeId } = req.context;
 
-    const customer = await prisma.customer.findFirst({
-      where: { id, companyId, storeId },
-    });
+    const customer = await prisma.customer.findFirst({ where: { id, companyId, storeId } });
     if (!customer) return res.status(404).json({ message: "Customer not found" });
 
-    const [creditSales, payments] = await Promise.all([
+    const [creditSales, payments, projects] = await Promise.all([
       prisma.sale.findMany({
         where: { customerId: id, companyId, paymentMethod: "CREDIT" },
-        include: { saleItems: { include: { product: true } } },
+        include: { saleItems: { include: { product: true } }, project: true },
         orderBy: { createdAt: "desc" },
       }),
       prisma.customerPayment.findMany({
         where: { customerId: id, companyId },
         orderBy: { createdAt: "desc" },
       }),
+      prisma.customerProject.findMany({ where: { customerId: id }, orderBy: { createdAt: "desc" } }),
     ]);
 
     const activeCreditSales = creditSales.filter((s) => s.status === "COMPLETED");
     const totalCreditIssued = activeCreditSales.reduce((sum, s) => sum + s.totalAmount, 0);
     const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
 
+    // Real, tagged sales activity per project — a reporting slice, not a
+    // separate balance. The customer's actual credit exposure is always
+    // the one totalCredit figure below, shared across every project.
+    const allSalesForCustomer = await prisma.sale.findMany({
+      where: { customerId: id, companyId, status: "COMPLETED" },
+      select: { totalAmount: true, projectId: true },
+    });
+
+    const projectsWithTotals = projects.map((p) => ({
+      ...p,
+      salesTotal: allSalesForCustomer
+        .filter((s) => s.projectId === p.id)
+        .reduce((sum, s) => sum + s.totalAmount, 0),
+    }));
+
+    const untaggedTotal = allSalesForCustomer
+      .filter((s) => !s.projectId)
+      .reduce((sum, s) => sum + s.totalAmount, 0);
+
     res.json({
       customer,
       creditSales,
       payments,
+      projects: projectsWithTotals,
+      untaggedSalesTotal: untaggedTotal,
       analytics: {
         creditSaleCount: activeCreditSales.length,
         totalCreditIssued,
@@ -131,7 +151,6 @@ export const getCustomerDetail = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
-
 // POST /api/customers/:id/pay — records a real payment, reduces the balance
 export const recordCustomerPayment = async (req, res) => {
   try {
@@ -166,6 +185,79 @@ export const recordCustomerPayment = async (req, res) => {
     ]);
 
     res.json({ customer: updatedCustomer, payment });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// GET /api/customers/:customerId/projects
+export const getCustomerProjects = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { companyId, storeId } = req.context;
+
+    const customer = await prisma.customer.findFirst({ where: { id: customerId, companyId, storeId } });
+    if (!customer) return res.status(404).json({ message: "Customer not found" });
+
+    const projects = await prisma.customerProject.findMany({
+      where: { customerId },
+      orderBy: { createdAt: "desc" },
+    });
+
+    res.json(projects);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// POST /api/customers/:customerId/projects
+export const createCustomerProject = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { name, location } = req.body;
+    const { companyId, storeId } = req.context;
+
+    if (!name) return res.status(400).json({ message: "Project name is required" });
+
+    const customer = await prisma.customer.findFirst({ where: { id: customerId, companyId, storeId } });
+    if (!customer) return res.status(404).json({ message: "Customer not found" });
+
+    const project = await prisma.customerProject.create({
+      data: { customerId, name, location },
+    });
+
+    res.status(201).json(project);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// PATCH /api/customers/:customerId/projects/:id
+export const updateCustomerProject = async (req, res) => {
+  try {
+    const { customerId, id } = req.params;
+    const { name, location, isActive } = req.body;
+    const { companyId, storeId } = req.context;
+
+    const customer = await prisma.customer.findFirst({ where: { id: customerId, companyId, storeId } });
+    if (!customer) return res.status(404).json({ message: "Customer not found" });
+
+    const existing = await prisma.customerProject.findFirst({ where: { id, customerId } });
+    if (!existing) return res.status(404).json({ message: "Project not found" });
+
+    const updated = await prisma.customerProject.update({
+      where: { id },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(location !== undefined && { location }),
+        ...(isActive !== undefined && { isActive }),
+      },
+    });
+
+    res.json(updated);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: err.message });

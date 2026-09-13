@@ -163,6 +163,7 @@ model Customer {
   sales    Sale[]
   quotes Quote[]
   payments CustomerPayment[]
+  projects CustomerProject[]
   creditLimit Float @default(0)
   @@map("customer")
 }
@@ -195,8 +196,10 @@ model Sale {
   user            User          @relation(fields: [userId], references: [id])
   saleItems       SaleItem[]
   payments SalePayment[]
+  projectId String? @db.Uuid
   customerId String?   @db.Uuid
   customer   Customer? @relation(fields: [customerId], references: [id])
+  project CustomerProject? @relation(fields: [projectId], references: [id])
 
   voidedAt       DateTime?
   voidReason     String?
@@ -779,6 +782,8 @@ model Quote {
   updatedAt       DateTime    @updatedAt
 
   items         QuoteItem[]
+  projectId   String?          @db.Uuid
+  project     CustomerProject? @relation(fields: [projectId], references: [id])
   company       Company  @relation(fields: [companyId], references: [id])
   store         Store    @relation(fields: [storeId], references: [id])
   user          User     @relation(fields: [userId], references: [id])
@@ -808,4 +813,19 @@ enum QuoteStatus {
   CONVERTED
   EXPIRED
   CANCELLED
+}
+
+model CustomerProject {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId String   @db.Uuid
+  name       String
+  location   String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id])
+  sales    Sale[]
+  quotes Quote[]
+
+  @@map("customer_project")
 }
