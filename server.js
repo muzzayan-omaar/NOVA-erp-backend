@@ -4,6 +4,8 @@ dotenv.config();
 import app from "./src/app.js";
 import http from "http";
 import { Server } from "socket.io";
+import cron from "node-cron";
+import { runDailyBackupJob } from "./src/jobs/dailyBackupJob.js";
 
 const server = http.createServer(app);
 
@@ -41,4 +43,7 @@ const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
   console.log(`✅ Nova ERP Server running on http://localhost:${PORT}`);
+});
+cron.schedule("0 20 * * *", () => {
+  runDailyBackupJob();
 });

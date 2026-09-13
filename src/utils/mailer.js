@@ -25,7 +25,7 @@ const getTransporter = () => {
 
 // Returns { sent: boolean, reason?: string } — never throws, so callers
 // can decide what to do next instead of the whole request failing.
-export const sendEmail = async ({ to, subject, html }) => {
+export const sendEmail = async ({ to, subject, html, attachments = [] }) => {
   const t = getTransporter();
 
   if (!t) {
@@ -39,6 +39,7 @@ export const sendEmail = async ({ to, subject, html }) => {
       to,
       subject,
       html,
+      attachments,
     });
     return { sent: true };
   } catch (err) {

@@ -3,36 +3,41 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
 // Deletes in FK-safe order — children before parents.
+// Deletes in FK-safe order — children before parents.
 export const resetDb = async () => {
-   await prisma.notification.deleteMany();
+  // ── Notifications & audit (reference user) ──────────────────────────
+  await prisma.notification.deleteMany();
   await prisma.auditLog.deleteMany();
 
+  // ── Sales / payments ────────────────────────────────────────────────
   await prisma.salePayment.deleteMany();
   await prisma.customerPayment.deleteMany();
-
   await prisma.saleItem.deleteMany();
   await prisma.sale.deleteMany();
 
-  await prisma.inventoryMovement.deleteMany();
+  // ── Quotes (new migration) ──────────────────────────────────────────
+  await prisma.quoteItem.deleteMany();
+  await prisma.quote.deleteMany();
 
-  // Stock counts reference products, so delete them BEFORE products
+  // ── Inventory ───────────────────────────────────────────────────────
+  await prisma.inventoryMovement.deleteMany();
   await prisma.stockCountItem.deleteMany();
   await prisma.stockCount.deleteMany();
-
   await prisma.product.deleteMany();
 
+  // ── Other domain tables ─────────────────────────────────────────────
   await prisma.expense.deleteMany();
   await prisma.customer.deleteMany();
   await prisma.supplier.deleteMany();
   await prisma.payroll.deleteMany();
 
+  // ── Users & stores (after everything that references them) ──────────
   await prisma.user.deleteMany();
   await prisma.store.deleteMany();
 
-  // Join tables & subscription first
+  // ── Billing / packages ──────────────────────────────────────────────
   await prisma.subscription.deleteMany();
   await prisma.packageBundle.deleteMany();
-
   await prisma.package.deleteMany();
   await prisma.bundle.deleteMany();
   await prisma.company.deleteMany();

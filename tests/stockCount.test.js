@@ -55,48 +55,52 @@ describe("Stock Count", () => {
     expect(res.body.missingItems).toContain("Test Product");
   });
 
-  it("submit + approve applies stock correction and reports shrinkage value", async () => {
-    const created = await request(app)
-      .post("/api/stock-counts")
-      .set(authHeader(ctx.branchManager))
-      .send({});
+  it(
+    "submit + approve applies stock correction and reports shrinkage value",
+    async () => {
+      const created = await request(app)
+        .post("/api/stock-counts")
+        .set(authHeader(ctx.branchManager))
+        .send({});
 
-    const itemId = created.body.items[0].id;
+      const itemId = created.body.items[0].id;
 
-    // Physical count found only 45, but system said 50 — 5 units missing
-    await request(app)
-      .patch(`/api/stock-counts/${created.body.id}/items`)
-      .set(authHeader(ctx.branchManager))
-      .send({ items: [{ itemId, countedQuantity: 45 }] });
+      // Physical count found only 45, but system said 50 — 5 units missing
+      await request(app)
+        .patch(`/api/stock-counts/${created.body.id}/items`)
+        .set(authHeader(ctx.branchManager))
+        .send({ items: [{ itemId, countedQuantity: 45 }] });
 
-    // 1. Branch manager submits for GM review
-    const submitRes = await request(app)
-      .post(`/api/stock-counts/${created.body.id}/submit`)
-      .set(authHeader(ctx.branchManager));
+      // 1. Branch manager submits for GM review
+      const submitRes = await request(app)
+        .post(`/api/stock-counts/${created.body.id}/submit`)
+        .set(authHeader(ctx.branchManager));
 
-    expect(submitRes.status).toBe(200);
-    expect(submitRes.body.discrepancyCount).toBe(1);
-    expect(submitRes.body.totalShrinkageValue).toBe(5000); // 5 units × buyingPrice 1000
+      expect(submitRes.status).toBe(200);
+      expect(submitRes.body.discrepancyCount).toBe(1);
+      expect(submitRes.body.totalShrinkageValue).toBe(5000); // 5 units × buyingPrice 1000
 
-    // Stock must NOT have changed yet — only GM approval touches the ledger
-    let product = await prisma.product.findUnique({ where: { id: ctx.product.id } });
-    expect(product.stockQuantity).toBe(50);
+      // Stock must NOT have changed yet — only GM approval touches the ledger
+      let product = await prisma.product.findUnique({ where: { id: ctx.product.id } });
+      expect(product.stockQuantity).toBe(50);
 
-    // 2. GM approves → stock is corrected
-    const approveRes = await request(app)
-      .post(`/api/stock-counts/${created.body.id}/approve`)
-      .set(authHeader(ctx.gm));
+      // 2. GM approves → stock is corrected
+      const approveRes = await request(app)
+        .post(`/api/stock-counts/${created.body.id}/approve`)
+        .set(authHeader(ctx.gm));
 
-    expect(approveRes.status).toBe(200);
+      expect(approveRes.status).toBe(200);
 
-    product = await prisma.product.findUnique({ where: { id: ctx.product.id } });
-    expect(product.stockQuantity).toBe(45);
+      product = await prisma.product.findUnique({ where: { id: ctx.product.id } });
+      expect(product.stockQuantity).toBe(45);
 
-    const movement = await prisma.inventoryMovement.findFirst({
-      where: { productId: ctx.product.id, type: "ADJUSTMENT" },
-    });
-    expect(movement).not.toBeNull();
-  });
+      const movement = await prisma.inventoryMovement.findFirst({
+        where: { productId: ctx.product.id, type: "ADJUSTMENT" },
+      });
+      expect(movement).not.toBeNull();
+    },
+    30000 // 30s — remote Supabase is slow
+  );
 
   it("branch manager only sees counts for their own store, GM sees all", async () => {
     // Second store + branch manager, same company

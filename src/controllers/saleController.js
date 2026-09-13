@@ -141,82 +141,94 @@ export const createSale = async (req, res) => {
         : [...distinctMethods][0]
       : paymentMethod;
 
-    const sale = await prisma.$transaction(async (tx) => {
-      const newSale = await tx.sale.create({
-        data: {
-          companyId: req.context.companyId,
-          storeId: req.context.storeId,
-          userId: req.context.userId,
-          totalAmount,
-          subtotal,
-          vatAmount,
-          discount: Number(discount),
-          paymentMethod: storedPaymentMethod,
-          customerId,
-          clientReferenceId,
-          clientCreatedAt: clientCreatedAt ? new Date(clientCreatedAt) : null,
-          fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
-          qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`,
-        },
-      });
-
-      const saleItems = [];
-      const movements = [];
-
-      for (const item of items) {
-        const product = productMap.get(item.productId);
-        const itemSubtotal = product.sellingPrice * item.quantity;
-
-        saleItems.push({
-          saleId: newSale.id,
-          productId: product.id,
-          quantity: item.quantity,
-          unitPrice: product.sellingPrice,
-          subtotal: itemSubtotal,
+        const sale = await prisma.$transaction(
+      async (tx) => {
+        const newSale = await tx.sale.create({
+          data: {
+            companyId: req.context.companyId,
+            storeId: req.context.storeId,
+            userId: req.context.userId,
+            totalAmount,
+            subtotal,
+            vatAmount,
+            discount: Number(discount),
+            paymentMethod: storedPaymentMethod,
+            customerId,
+            clientReferenceId,
+            clientCreatedAt: clientCreatedAt ? new Date(clientCreatedAt) : null,
+            fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
+            qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`,
+          },
         });
 
-        movements.push({
-          companyId: req.context.companyId,
-          storeId: req.context.storeId,
-          productId: product.id,
-          createdById: req.context.userId,
-          type: "SALE",
-          quantity: item.quantity,
-          reason: "Sale transaction",
+        const saleItems = [];
+        const movements = [];
+
+        for (const item of items) {
+          const product = productMap.get(item.productId);
+          const itemSubtotal = product.sellingPrice * item.quantity;
+
+          saleItems.push({
+            saleId: newSale.id,
+            productId: product.id,
+            quantity: item.quantity,
+            unitPrice: product.sellingPrice,
+            subtotal: itemSubtotal,
+          });
+
+          movements.push({
+            companyId: req.context.companyId,
+            storeId: req.context.storeId,
+            productId: product.id,
+            createdById: req.context.userId,
+            type: "SALE",
+            quantity: item.quantity,
+            reason: "Sale transaction",
+          });
+        }
+
+        // Parallel stock decrements (was sequential — caused the 5s timeout)
+        await Promise.all(
+          items.map((item) => {
+            const product = productMap.get(item.productId);
+            return tx.product.update({
+              where: { id: product.id },
+              data: { stockQuantity: { decrement: item.quantity } },
+            });
+          })
+        );
+
+        await tx.saleItem.createMany({ data: saleItems });
+        await tx.inventoryMovement.createMany({ data: movements });
+
+        // Real payment ledger — always written, single-method or split
+        const paymentLines =
+          splitEntries || [{ method: paymentMethod, amount: totalAmount, reference: null }];
+
+        await tx.salePayment.createMany({
+          data: paymentLines.map((p) => ({
+            saleId: newSale.id,
+            method: p.method,
+            amount: p.amount,
+            reference: p.reference,
+          })),
         });
 
-        await tx.product.update({
-          where: { id: product.id },
-          data: { stockQuantity: { decrement: item.quantity } },
-        });
+        // Increment customer credit using the same amount we checked against the limit
+        if (creditPortionForLimitCheck > 0 && customerId) {
+          await tx.customer.update({
+            where: { id: customerId },
+            data: { totalCredit: { increment: creditPortionForLimitCheck } },
+          });
+        }
+
+        return newSale;
+      },
+      {
+        maxWait: 10000,
+        timeout: 20000,
       }
-
-      await tx.saleItem.createMany({ data: saleItems });
-      await tx.inventoryMovement.createMany({ data: movements });
-
-      // Real payment ledger — always written, single-method or split
-      const paymentLines =
-        splitEntries || [{ method: paymentMethod, amount: totalAmount, reference: null }];
-
-      await tx.salePayment.createMany({
-        data: paymentLines.map((p) => ({
-          saleId: newSale.id,
-          method: p.method,
-          amount: p.amount,
-          reference: p.reference,
-        })),
-      });
-
-      // Increment customer credit using the same amount we checked against the limit
-      if (creditPortionForLimitCheck > 0 && customerId) {
-        await tx.customer.update({
-          where: { id: customerId },
-          data: { totalCredit: { increment: creditPortionForLimitCheck } },
-        });
-      }
-
-      return newSale;
-    });
+    );
 
     await createAuditLog({
       userId: req.context.userId,

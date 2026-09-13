@@ -287,15 +287,23 @@ export const convertQuote = async (req, res) => {
       return res.status(400).json({ message: "This quote was cancelled" });
     }
 
-    // Re-validate stock at conversion time
-    for (const item of quote.items) {
-      const currentProduct = await prisma.product.findUnique({ where: { id: item.productId } });
-      if (!currentProduct || currentProduct.stockQuantity < item.quantity) {
-        return res.status(400).json({
-          message: `Insufficient stock for ${item.product.name} — available: ${currentProduct?.stockQuantity ?? 0}, needed: ${item.quantity}`,
-        });
-      }
-    }
+    
+    // Re-validate stock at conversion time (single query)
+const productIds = quote.items.map((i) => i.productId);
+const currentProducts = await prisma.product.findMany({
+  where: { id: { in: productIds } },
+  select: { id: true, stockQuantity: true, name: true },
+});
+const stockMap = new Map(currentProducts.map((p) => [p.id, p]));
+
+for (const item of quote.items) {
+  const current = stockMap.get(item.productId);
+  if (!current || current.stockQuantity < item.quantity) {
+    return res.status(400).json({
+      message: `Insufficient stock for ${item.product.name} — available: ${current?.stockQuantity ?? 0}, needed: ${item.quantity}`,
+    });
+  }
+}
 
     let splitEntries = null;
     if (payments && Array.isArray(payments) && payments.length > 0) {
@@ -335,69 +343,83 @@ export const convertQuote = async (req, res) => {
       : paymentMethod;
 
     const sale = await prisma.$transaction(async (tx) => {
-      const newSale = await tx.sale.create({
-        data: {
-          companyId, storeId, userId,
-          totalAmount: quote.totalAmount,
-          subtotal: quote.subtotal,
-          vatAmount: quote.vatAmount,
-          discount: 0,
-          paymentMethod: storedPaymentMethod,
-          customerId: quote.customerId,
-          clientReferenceId,
-          fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
-          qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`,
-        },
-      });
+  const newSale = await tx.sale.create({
+    data: {
+      companyId,
+      storeId,
+      userId,
+      totalAmount: quote.totalAmount,
+      subtotal: quote.subtotal,
+      vatAmount: quote.vatAmount,
+      discount: 0,
+      paymentMethod: storedPaymentMethod,
+      customerId: quote.customerId,
+      clientReferenceId,
+      fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
+      qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`,
+    },
+  });
 
-      const saleItems = [];
-      const movements = [];
+  const saleItems = quote.items.map((item) => ({
+    saleId: newSale.id,
+    productId: item.productId,
+    quantity: item.quantity,
+    unitPrice: item.unitPrice,
+    subtotal: item.subtotal,
+  }));
 
-      for (const item of quote.items) {
-        saleItems.push({
-          saleId: newSale.id,
-          productId: item.productId,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          subtotal: item.subtotal,
-        });
+  const movements = quote.items.map((item) => ({
+    companyId,
+    storeId,
+    productId: item.productId,
+    createdById: userId,
+    type: "SALE",
+    quantity: item.quantity,
+    reason: `Converted from quote ${quote.id.slice(0, 8)}`,
+  }));
 
-        movements.push({
-          companyId, storeId, productId: item.productId,
-          createdById: userId, type: "SALE", quantity: item.quantity,
-          reason: `Converted from quote ${quote.id.slice(0, 8)}`,
-        });
+  // Run all stock decrements in parallel instead of sequentially
+  await Promise.all(
+    quote.items.map((item) =>
+      tx.product.update({
+        where: { id: item.productId },
+        data: { stockQuantity: { decrement: item.quantity } },
+      })
+    )
+  );
 
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { stockQuantity: { decrement: item.quantity } },
-        });
-      }
+  await tx.saleItem.createMany({ data: saleItems });
+  await tx.inventoryMovement.createMany({ data: movements });
 
-      await tx.saleItem.createMany({ data: saleItems });
-      await tx.inventoryMovement.createMany({ data: movements });
+  const paymentLines =
+    splitEntries || [{ method: paymentMethod, amount: quote.totalAmount, reference: null }];
 
-      const paymentLines = splitEntries || [{ method: paymentMethod, amount: quote.totalAmount, reference: null }];
-      await tx.salePayment.createMany({
-        data: paymentLines.map((p) => ({
-          saleId: newSale.id, method: p.method, amount: p.amount, reference: p.reference,
-        })),
-      });
+  await tx.salePayment.createMany({
+    data: paymentLines.map((p) => ({
+      saleId: newSale.id,
+      method: p.method,
+      amount: p.amount,
+      reference: p.reference,
+    })),
+  });
 
-      if (creditPortion > 0 && quote.customerId) {
-        await tx.customer.update({
-          where: { id: quote.customerId },
-          data: { totalCredit: { increment: creditPortion } },
-        });
-      }
-
-      await tx.quote.update({
-        where: { id: quote.id },
-        data: { status: "CONVERTED", convertedSaleId: newSale.id },
-      });
-
-      return newSale;
+  if (creditPortion > 0 && quote.customerId) {
+    await tx.customer.update({
+      where: { id: quote.customerId },
+      data: { totalCredit: { increment: creditPortion } },
     });
+  }
+
+  await tx.quote.update({
+    where: { id: quote.id },
+    data: { status: "CONVERTED", convertedSaleId: newSale.id },
+  });
+
+  return newSale;
+}, {
+  maxWait: 10000,   // how long to wait to acquire the transaction
+  timeout: 20000,   // how long the transaction itself may run
+});
 
     await createAuditLog({
       userId, companyId, storeId,
