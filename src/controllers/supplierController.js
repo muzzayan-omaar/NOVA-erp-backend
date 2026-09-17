@@ -1,4 +1,5 @@
 import prisma from "../lib/prisma.js";
+import { calculateSupplierReliability } from "../services/supplierReliabilityService.js";
 
 // GET suppliers for active store
 export const getSuppliers = async (req, res) => {
@@ -163,6 +164,7 @@ export const recordSupplierPayment = async (req, res) => {
           category: "Supplier Payment",
           description: notes || `Payment to ${supplier.name}`,
           amount: amt,
+          method: method || "CASH",
           createdById: userId,
           supplierId: id,
         },
@@ -170,6 +172,23 @@ export const recordSupplierPayment = async (req, res) => {
     ]);
 
     res.json({ supplier: updatedSupplier, expense });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// GET /api/suppliers/:id/reliability
+export const getSupplierReliability = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { companyId, storeId } = req.context;
+
+    const supplier = await prisma.supplier.findFirst({ where: { id, companyId, storeId } });
+    if (!supplier) return res.status(404).json({ message: "Supplier not found" });
+
+    const reliability = await calculateSupplierReliability(companyId, id);
+    res.json(reliability);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: err.message });

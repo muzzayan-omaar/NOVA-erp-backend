@@ -7,6 +7,7 @@ import {
   deleteSupplier,
   getSupplierDetail,
   recordSupplierPayment,
+  getSupplierReliability, 
 } from "../controllers/supplierController.js";
 
 import protect from "../middleware/protect.js";
@@ -23,5 +24,6 @@ router.put("/:id", updateSupplier);
 router.delete("/:id", deleteSupplier);
 router.get("/:id/detail", getSupplierDetail);
 router.post("/:id/pay", recordSupplierPayment);
+router.get("/:id/reliability", getSupplierReliability);
 
 export default router;

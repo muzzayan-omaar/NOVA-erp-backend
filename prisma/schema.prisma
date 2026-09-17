@@ -316,6 +316,7 @@ model Expense {
   storeId     String   @db.Uuid
   category    String
   description String?
+  method PaymentMethod?
   amount      Float
   createdById String   @db.Uuid
   createdAt   DateTime @default(now())
@@ -385,6 +386,7 @@ enum PaymentMethod {
   CARD
   CREDIT
   MIXED
+  BANK_TRANSFER
 }
 
 enum SaleStatus {
@@ -658,6 +660,7 @@ model PurchaseOrder {
   createdAt   DateTime            @default(now())
   sentAt      DateTime?
   receivedAt  DateTime?
+  expectedDeliveryDate DateTime?
 
   items     PurchaseOrderItem[]
   company   Company  @relation(fields: [companyId], references: [id])

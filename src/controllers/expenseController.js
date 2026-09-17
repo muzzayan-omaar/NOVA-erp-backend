@@ -46,9 +46,10 @@ export const getExpenses = async (req, res) => {
 };
 
 // CREATE expense
+
 export const createExpense = async (req, res) => {
   try {
-    const { category, description, amount, expenseType } = req.body;
+    const { category, description, amount, expenseType, method } = req.body;
     const { companyId, storeId, userId } = req.context;
 
     if (!category || !amount) {
@@ -68,6 +69,7 @@ export const createExpense = async (req, res) => {
         amount: Number(amount),
         createdById: userId,
         expenseType: expenseType === "CAPITAL" ? "CAPITAL" : "OPERATING",
+        method: method || null,
       },
     });
 
@@ -78,7 +80,7 @@ export const createExpense = async (req, res) => {
       action: "EXPENSE_CREATED",
       entityType: "expense",
       entityId: expense.id,
-      metadata: { category, amount: Number(amount), description, expenseType: expense.expenseType },
+      metadata: { category, amount: Number(amount), description, expenseType: expense.expenseType, method },
     });
 
     res.status(201).json(expense);

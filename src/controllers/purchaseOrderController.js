@@ -61,10 +61,10 @@ export const getPurchaseOrderDetail = async (req, res) => {
 };
 
 // POST /api/purchase-orders
-// body: { supplierId, notes, items: [{ productId, quantityOrdered, unitCost }] }
+// body: { supplierId, notes, items: [{ productId, quantityOrdered, unitCost }], expectedDeliveryDate? }
 export const createPurchaseOrder = async (req, res) => {
   try {
-    const { supplierId, notes, items } = req.body;
+    const { supplierId, notes, items, expectedDeliveryDate } = req.body;
     const { companyId, storeId, userId } = req.context;
 
     if (!supplierId || !Array.isArray(items) || items.length === 0) {
@@ -81,6 +81,7 @@ export const createPurchaseOrder = async (req, res) => {
         supplierId,
         createdById: userId,
         notes,
+        expectedDeliveryDate: expectedDeliveryDate ? new Date(expectedDeliveryDate) : null,
         items: {
           create: items.map((i) => ({
             productId: i.productId,
@@ -97,7 +98,7 @@ export const createPurchaseOrder = async (req, res) => {
       action: "PURCHASE_ORDER_CREATED",
       entityType: "purchase_order",
       entityId: order.id,
-      metadata: { supplierName: supplier.name, itemCount: items.length },
+      metadata: { supplierName: supplier.name, itemCount: items.length, expectedDeliveryDate },
     });
 
     res.status(201).json(order);
