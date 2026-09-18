@@ -141,7 +141,7 @@ export const getSupplierDetail = async (req, res) => {
 export const recordSupplierPayment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { amount, notes } = req.body;
+    const { amount, notes, method } = req.body;
     const { companyId, storeId, userId } = req.context;
 
     const amt = Number(amount);
