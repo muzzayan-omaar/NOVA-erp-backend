@@ -14,6 +14,7 @@ export const createProduct = async (req, res) => {
       sellingPrice,
       stockQuantity = 0,
       unitType = "pcs",
+      isSerialized = false,
     } = req.body;
 
     if (!name || !sellingPrice) {
@@ -34,6 +35,7 @@ export const createProduct = async (req, res) => {
         sellingPrice: parseFloat(sellingPrice),
         stockQuantity: parseFloat(stockQuantity),
         unitType,
+        isSerialized: Boolean(isSerialized),
       },
     });
 
@@ -110,6 +112,7 @@ export const updateProduct = async (req, res) => {
       stockQuantity,
       unitType,
       isActive,
+      isSerialized,
     } = req.body;
 
     const product = await prisma.product.update({
@@ -129,6 +132,7 @@ export const updateProduct = async (req, res) => {
         }),
         ...(unitType !== undefined && { unitType }),
         ...(isActive !== undefined && { isActive }),
+        ...(isSerialized !== undefined && { isSerialized: Boolean(isSerialized) }),
       },
     });
 
@@ -147,6 +151,9 @@ export const updateProduct = async (req, res) => {
     }
     if (name !== undefined && existingProduct.name !== product.name) {
       changes.name = { from: existingProduct.name, to: product.name };
+    }
+    if (isSerialized !== undefined && existingProduct.isSerialized !== product.isSerialized) {
+      changes.isSerialized = { from: existingProduct.isSerialized, to: product.isSerialized };
     }
 
     await createAuditLog({
@@ -238,5 +245,45 @@ export const getLowStock = async (req, res) => {
     res.status(500).json({
       message: "Failed to fetch low stock",
     });
+  }
+};
+
+// GET /api/products/resolve-scan?code=XXXX
+// Checks serial → unit barcode → base barcode, in that priority order —
+// a serial number is the most specific thing a scan could mean.
+export const resolveScan = async (req, res) => {
+  try {
+    const { code } = req.query;
+    const { companyId, storeId } = req.context;
+
+    if (!code) return res.status(400).json({ message: "No code provided" });
+
+    const serial = await prisma.productSerial.findFirst({
+      where: { companyId, storeId, serialNumber: code, status: "IN_STOCK" },
+      include: { product: true },
+    });
+    if (serial) {
+      return res.json({ type: "SERIAL", product: serial.product, productUnit: null, serial });
+    }
+
+    const unit = await prisma.productUnit.findFirst({
+      where: { companyId, barcode: code, isActive: true },
+      include: { product: true },
+    });
+    if (unit && unit.product.storeId === storeId) {
+      return res.json({ type: "UNIT", product: unit.product, productUnit: unit, serial: null });
+    }
+
+    const product = await prisma.product.findFirst({
+      where: { companyId, storeId, barcode: code, isActive: true },
+    });
+    if (product) {
+      return res.json({ type: "BASE", product, productUnit: null, serial: null });
+    }
+
+    return res.status(404).json({ message: "No product, unit, or serial matches this code" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
   }
 };

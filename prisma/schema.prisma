@@ -33,6 +33,8 @@ model Company {
   users              User[]
   notifications      Notification[]
   customerPayments CustomerPayment[]
+  productUnits   ProductUnit[]
+  productSerials ProductSerial[]
   expenses    Expense[]
   stockCounts StockCount[]
   supportThreads SupportThread[]
@@ -70,6 +72,7 @@ model Store {
   users              User[]
   notifications      Notification[]
   expenses           Expense[]
+  productSerials ProductSerial[]
   stockCounts        StockCount[]
   purchaseOrders PurchaseOrder[]
   customerPayments CustomerPayment[]
@@ -139,6 +142,9 @@ model Product {
   store           Store               @relation(fields: [storeId], references: [id])
   saleItems       SaleItem[]
   quoteItems QuoteItem[]
+  isSerialized Boolean @default(false)
+  units        ProductUnit[]
+  serials      ProductSerial[]
   stockCountItems StockCountItem[]
   purchaseOrderItems PurchaseOrderItem[]
   stockTransits StockTransit[]
@@ -219,6 +225,10 @@ model SaleItem {
   quantity  Float
   unitPrice Float
   subtotal  Float
+  productUnitId        String?      @db.Uuid
+  productUnit          ProductUnit? @relation(fields: [productUnitId], references: [id])
+  unitConversionFactor Float        @default(1)
+  serial               ProductSerial?
   createdAt DateTime? @default(now()) @db.Timestamptz(6)
   product   Product   @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   sale      Sale      @relation(fields: [saleId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -679,7 +689,9 @@ model PurchaseOrderItem {
   quantityOrdered  Float
   quantityReceived Float?
   unitCost         Float
-
+  productUnitId        String?      @db.Uuid
+  productUnit          ProductUnit? @relation(fields: [productUnitId], references: [id])
+  unitConversionFactor Float        @default(1)
   purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
   product       Product       @relation(fields: [productId], references: [id])
   landedUnitCost Float?
@@ -803,7 +815,9 @@ model QuoteItem {
   quantity  Float
   unitPrice Float
   subtotal  Float
-
+  productUnitId        String?      @db.Uuid
+  productUnit          ProductUnit? @relation(fields: [productUnitId], references: [id])
+  unitConversionFactor Float        @default(1)
   quote   Quote   @relation(fields: [quoteId], references: [id])
   product Product @relation(fields: [productId], references: [id])
 
@@ -831,4 +845,54 @@ model CustomerProject {
   quotes Quote[]
 
   @@map("customer_project")
+}
+
+model ProductUnit {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId        String   @db.Uuid
+  productId        String   @db.Uuid
+  unitName         String   // e.g. "Bundle", "Carton", "Jerrycan"
+  conversionFactor Float    // how many BASE units this equals — e.g. 1 Bundle = 50 Pieces
+  barcode          String?
+  sellingPrice     Float?   // null = compute from base sellingPrice * conversionFactor
+  buyingPrice      Float?   // null = compute from base buyingPrice * conversionFactor
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company            Company             @relation(fields: [companyId], references: [id])
+  product            Product             @relation(fields: [productId], references: [id])
+  saleItems          SaleItem[]
+  quoteItems         QuoteItem[]
+  purchaseOrderItems PurchaseOrderItem[]
+
+  @@unique([companyId, barcode])
+  @@map("product_unit")
+}
+
+model ProductSerial {
+  id           String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId    String              @db.Uuid
+  productId    String              @db.Uuid
+  storeId      String              @db.Uuid
+  serialNumber String
+  status       ProductSerialStatus @default(IN_STOCK)
+  saleItemId   String?            @unique @db.Uuid
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  product  Product   @relation(fields: [productId], references: [id])
+  store    Store     @relation(fields: [storeId], references: [id])
+  saleItem SaleItem? @relation(fields: [saleItemId], references: [id])
+
+  @@unique([companyId, serialNumber])
+  @@map("product_serial")
+}
+
+enum ProductSerialStatus {
+  IN_STOCK
+  IN_TRANSIT
+  SOLD
+  RETURNED_DEFECTIVE
 }
