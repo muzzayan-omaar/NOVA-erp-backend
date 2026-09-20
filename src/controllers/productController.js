@@ -61,6 +61,9 @@ export const createProduct = async (req, res) => {
 /**
  * GET PRODUCTS
  */
+/**
+ * GET PRODUCTS
+ */
 export const getProducts = async (req, res) => {
   try {
     const products = await prisma.product.findMany({
@@ -68,12 +71,24 @@ export const getProducts = async (req, res) => {
         companyId: req.context.companyId,
         storeId: req.context.storeId,
       },
+      include: {
+        _count: {
+          select: {
+            units: { where: { isActive: true } },
+          },
+        },
+      },
       orderBy: {
         createdAt: "desc",
       },
     });
 
-    res.json(products);
+    const shaped = products.map((p) => ({
+      ...p,
+      hasUnits: p._count.units > 0,
+    }));
+
+    res.json(shaped);
   } catch (error) {
     console.error(error);
     res.status(500).json({
