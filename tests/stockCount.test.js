@@ -9,12 +9,12 @@ let ctx;
 beforeEach(async () => {
   await resetDb();
   ctx = await seedCompany();
-});
+}, 60_000); // remote Supabase reset + seed can exceed the default 20s
 
 afterAll(async () => {
   await resetDb();
   await prisma.$disconnect();
-});
+}, 60_000);
 
 describe("Stock Count", () => {
   it("snapshots current stock quantity when a count is started", async () => {
@@ -99,49 +99,53 @@ describe("Stock Count", () => {
       });
       expect(movement).not.toBeNull();
     },
-    30000 // 30s — remote Supabase is slow
+    60_000
   );
 
-  it("branch manager only sees counts for their own store, GM sees all", async () => {
-    // Second store + branch manager, same company
-    const store2 = await prisma.store.create({
-      data: { companyId: ctx.company.id, name: "Branch 2" },
-    });
-    const manager2 = await prisma.user.create({
-      data: {
-        companyId: ctx.company.id,
-        storeId: store2.id,
-        activeStoreId: store2.id,
-        name: "Manager 2",
-        email: "manager2@test.com",
-        passwordHash: ctx.branchManager.passwordHash,
-        role: "BRANCH_MANAGER",
-      },
-    });
-    await prisma.product.create({
-      data: {
-        companyId: ctx.company.id,
-        storeId: store2.id,
-        name: "Branch 2 Product",
-        sku: "B2-001",
-        buyingPrice: 500,
-        sellingPrice: 1000,
-        stockQuantity: 10,
-      },
-    });
+  it(
+    "branch manager only sees counts for their own store, GM sees all",
+    async () => {
+      // Second store + branch manager, same company
+      const store2 = await prisma.store.create({
+        data: { companyId: ctx.company.id, name: "Branch 2" },
+      });
+      const manager2 = await prisma.user.create({
+        data: {
+          companyId: ctx.company.id,
+          storeId: store2.id,
+          activeStoreId: store2.id,
+          name: "Manager 2",
+          email: "manager2@test.com",
+          passwordHash: ctx.branchManager.passwordHash,
+          role: "BRANCH_MANAGER",
+        },
+      });
+      await prisma.product.create({
+        data: {
+          companyId: ctx.company.id,
+          storeId: store2.id,
+          name: "Branch 2 Product",
+          sku: "B2-001",
+          buyingPrice: 500,
+          sellingPrice: 1000,
+          stockQuantity: 10,
+        },
+      });
 
-    await request(app).post("/api/stock-counts").set(authHeader(ctx.branchManager)).send({});
-    await request(app).post("/api/stock-counts").set(authHeader(manager2)).send({});
+      await request(app).post("/api/stock-counts").set(authHeader(ctx.branchManager)).send({});
+      await request(app).post("/api/stock-counts").set(authHeader(manager2)).send({});
 
-    const managerView = await request(app)
-      .get("/api/stock-counts")
-      .set(authHeader(ctx.branchManager));
+      const managerView = await request(app)
+        .get("/api/stock-counts")
+        .set(authHeader(ctx.branchManager));
 
-    expect(managerView.body).toHaveLength(1);
-    expect(managerView.body[0].storeId).toBe(ctx.store.id);
+      expect(managerView.body).toHaveLength(1);
+      expect(managerView.body[0].storeId).toBe(ctx.store.id);
 
-    const gmView = await request(app).get("/api/stock-counts").set(authHeader(ctx.gm));
+      const gmView = await request(app).get("/api/stock-counts").set(authHeader(ctx.gm));
 
-    expect(gmView.body).toHaveLength(2); // sees both branches
-  });
+      expect(gmView.body).toHaveLength(2); // sees both branches
+    },
+    60_000
+  );
 });
