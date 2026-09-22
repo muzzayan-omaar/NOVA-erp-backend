@@ -82,13 +82,32 @@ export const createPurchaseOrder = async (req, res) => {
         createdById: userId,
         notes,
         expectedDeliveryDate: expectedDeliveryDate ? new Date(expectedDeliveryDate) : null,
-        items: {
-          create: items.map((i) => ({
-            productId: i.productId,
-            quantityOrdered: Number(i.quantityOrdered),
-            unitCost: Number(i.unitCost),
-          })),
-        },
+       items: {
+  create: await Promise.all(
+    items.map(async (i) => {
+      let unitConversionFactor = 1;
+      let productUnitId = null;
+
+      if (i.productUnitId) {
+        const unit = await prisma.productUnit.findFirst({
+          where: { id: i.productUnitId, companyId, productId: i.productId, isActive: true },
+        });
+        if (unit) {
+          unitConversionFactor = unit.conversionFactor;
+          productUnitId = unit.id;
+        }
+      }
+
+      return {
+        productId: i.productId,
+        quantityOrdered: Number(i.quantityOrdered),
+        unitCost: Number(i.unitCost), // cost PER the unit actually ordered (e.g. per Bundle)
+        productUnitId,
+        unitConversionFactor,
+      };
+    })
+  ),
+},
       },
       include: { items: { include: { product: true } }, supplier: true },
     });
