@@ -453,7 +453,7 @@ const requestSaleAction = (targetStatus, notifyTitle) => async (req, res) => {
           message: `UGX ${Number(sale.totalAmount).toLocaleString()} sale — reason: ${reason}`,
           type: "APPROVAL_REQUEST",
           priority: "HIGH",
-          uniqueKey: `${targetStatus}_${sale.id}`,
+          uniqueKey: `${targetStatus}_${sale.id}_${gm.id}`,
         })
       )
     );
@@ -515,9 +515,9 @@ export const approveSaleAction = async (req, res) => {
     const { id } = req.params;
 
     const sale = await prisma.sale.findFirst({
-  where: { id, companyId: req.context.companyId },
-  include: { saleItems: true, payments: true },
-});
+      where: { id, companyId: req.context.companyId },
+      include: { saleItems: true, payments: true },
+    });
 
     if (!sale) {
       return res.status(404).json({ message: "Sale not found" });
@@ -531,9 +531,12 @@ export const approveSaleAction = async (req, res) => {
 
     const updatedSale = await prisma.$transaction(async (tx) => {
       for (const item of sale.saleItems) {
+        // Restore base units (quantity × conversion factor)
+        const baseUnits = item.quantity * (item.unitConversionFactor || 1);
+
         await tx.product.update({
           where: { id: item.productId },
-          data: { stockQuantity: { increment: item.quantity } },
+          data: { stockQuantity: { increment: baseUnits } },
         });
 
         await tx.inventoryMovement.create({
@@ -543,7 +546,7 @@ export const approveSaleAction = async (req, res) => {
             productId: item.productId,
             createdById: req.context.userId,
             type: "IN",
-            quantity: item.quantity,
+            quantity: baseUnits,
             reason: `Sale ${finalStatus.toLowerCase()} (approved): ${sale.voidReason}`,
           },
         });

@@ -20,7 +20,7 @@ beforeEach(async () => {
     });
 
   sale = res.body;
-});
+}, 60000); // ← hook timeout (was default 20s)
 
 afterAll(async () => {
   await resetDb();
@@ -38,8 +38,8 @@ describe("Void request/approval flow", () => {
     expect(res.body.status).toBe("PENDING_VOID");
 
     const product = await prisma.product.findUnique({ where: { id: ctx.product.id } });
-    expect(product.stockQuantity).toBe(45); // still decremented, not yet reversed
-  });
+    expect(product.stockQuantity).toBe(45);
+  }, 45000);
 
   it("branch manager cannot approve — only GM can", async () => {
     await request(app)
@@ -52,7 +52,7 @@ describe("Void request/approval flow", () => {
       .set(authHeader(ctx.branchManager));
 
     expect(res.status).toBe(403);
-  });
+  }, 45000);
 
   it("GM approval reverses stock and finalizes as VOID", async () => {
     await request(app)
@@ -60,14 +60,16 @@ describe("Void request/approval flow", () => {
       .set(authHeader(ctx.cashier))
       .send({ reason: "Test" });
 
-    const res = await request(app).post(`/api/sales/${sale.id}/approve`).set(authHeader(ctx.gm));
+    const res = await request(app)
+      .post(`/api/sales/${sale.id}/approve`)
+      .set(authHeader(ctx.gm));
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("VOID");
 
     const product = await prisma.product.findUnique({ where: { id: ctx.product.id } });
-    expect(product.stockQuantity).toBe(50); // fully restored
-  });
+    expect(product.stockQuantity).toBe(50);
+  }, 45000);
 
   it("GM rejection reverts the sale to COMPLETED without touching stock", async () => {
     await request(app)
@@ -84,6 +86,6 @@ describe("Void request/approval flow", () => {
     expect(res.body.status).toBe("COMPLETED");
 
     const product = await prisma.product.findUnique({ where: { id: ctx.product.id } });
-    expect(product.stockQuantity).toBe(45); // untouched throughout
-  });
+    expect(product.stockQuantity).toBe(45);
+  }, 45000);
 });

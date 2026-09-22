@@ -19,14 +19,9 @@ import { generateLowStockNotifications } from "../modules/notifications/notifica
 const resolveAnalyticsStore = (req) => {
   const requestedStore = req.query.storeId;
 
-  // Owners can view all branches
-  // or select a branch
-
-  if (req.user.role === "OWNER") {
+  if (req.user.role === "GENERAL_MANAGER") {
     return requestedStore || "ALL";
   }
-
-  // Managers/cashiers use active selected branch
 
   return req.user.activeStoreId || req.user.storeId;
 };

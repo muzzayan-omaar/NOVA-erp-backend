@@ -208,10 +208,13 @@ export const getProfitLossReport = async (req, res) => {
 
     const revenue = sales.reduce((sum, s) => sum + (s.subtotal || 0), 0);
     const cogs = sales.reduce(
-      (sum, s) =>
-        sum + s.saleItems.reduce((s2, i) => s2 + i.quantity * (i.product?.buyingPrice || 0), 0),
+  (sum, s) =>
+    sum + s.saleItems.reduce(
+      (s2, i) => s2 + i.quantity * (i.unitConversionFactor || 1) * (i.product?.buyingPrice || 0),
       0
-    );
+    ),
+  0
+);
     const grossProfit = revenue - cogs;
 
     const expenseWhere = {
@@ -494,16 +497,19 @@ export const getReorderAlertsReport = async (req, res) => {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     const recentSaleItems = await prisma.saleItem.findMany({
-      where: {
-        sale: { companyId, storeId, status: "COMPLETED", createdAt: { gte: thirtyDaysAgo } },
-      },
-      select: { productId: true, quantity: true },
-    });
+  where: {
+    sale: { companyId, storeId, status: "COMPLETED", createdAt: { gte: thirtyDaysAgo } },
+  },
+  select: { productId: true, quantity: true, unitConversionFactor: true },
+});
 
-    const salesByProduct = {};
-    recentSaleItems.forEach((si) => {
-      salesByProduct[si.productId] = (salesByProduct[si.productId] || 0) + si.quantity;
-    });
+const salesByProduct = {};
+recentSaleItems.forEach((si) => {
+  const baseUnitsSold = si.quantity * (si.unitConversionFactor || 1);
+  salesByProduct[si.productId] = (salesByProduct[si.productId] || 0) + baseUnitsSold;
+});
+
+   
 
     const receivedOrders = await prisma.purchaseOrder.findMany({
       where: { companyId, status: "RECEIVED", sentAt: { not: null }, receivedAt: { not: null } },

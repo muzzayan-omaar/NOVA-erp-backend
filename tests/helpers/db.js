@@ -2,45 +2,73 @@ import prisma from "../../src/lib/prisma.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 
-// Deletes in FK-safe order — children before parents.
+// Retries on transient Supabase connection drops (ConnectionReset / P1017 / P1001)
+async function withRetry(fn, retries = 3) {
+  let lastError;
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      const isConnectionError =
+        err.message?.includes("Server has closed the connection") ||
+        err.message?.includes("ConnectionReset") ||
+        err.code === "P1017" ||
+        err.code === "P1001";
+
+      if (!isConnectionError || i === retries - 1) throw err;
+
+      await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+      try {
+        await prisma.$connect();
+      } catch {
+        // ignore — next attempt will try again
+      }
+    }
+  }
+  throw lastError;
+}
+
 // Deletes in FK-safe order — children before parents.
 export const resetDb = async () => {
-  // ── Notifications & audit (reference user) ──────────────────────────
-  await prisma.notification.deleteMany();
-  await prisma.auditLog.deleteMany();
+  await withRetry(async () => {
+    // ── Notifications & audit (reference user) ──────────────────────────
+    await prisma.notification.deleteMany();
+    await prisma.auditLog.deleteMany();
 
-  // ── Sales / payments ────────────────────────────────────────────────
-  await prisma.salePayment.deleteMany();
-  await prisma.customerPayment.deleteMany();
-  await prisma.saleItem.deleteMany();
-  await prisma.sale.deleteMany();
+    // ── Sales / payments ────────────────────────────────────────────────
+    await prisma.salePayment.deleteMany();
+    await prisma.customerPayment.deleteMany();
+    await prisma.saleItem.deleteMany();
+    await prisma.sale.deleteMany();
 
-  // ── Quotes (new migration) ──────────────────────────────────────────
-  await prisma.quoteItem.deleteMany();
-  await prisma.quote.deleteMany();
+    // ── Quotes (new migration) ──────────────────────────────────────────
+    await prisma.quoteItem.deleteMany();
+    await prisma.quote.deleteMany();
 
-  // ── Inventory ───────────────────────────────────────────────────────
-  await prisma.inventoryMovement.deleteMany();
-  await prisma.stockCountItem.deleteMany();
-  await prisma.stockCount.deleteMany();
-  await prisma.product.deleteMany();
+    // ── Inventory ───────────────────────────────────────────────────────
+    await prisma.inventoryMovement.deleteMany();
+    await prisma.stockCountItem.deleteMany();
+    await prisma.stockCount.deleteMany();
+    await prisma.product.deleteMany();
 
-  // ── Other domain tables ─────────────────────────────────────────────
-  await prisma.expense.deleteMany();
-  await prisma.customer.deleteMany();
-  await prisma.supplier.deleteMany();
-  await prisma.payroll.deleteMany();
+    // ── Other domain tables ─────────────────────────────────────────────
+    await prisma.expense.deleteMany();
+    await prisma.customer.deleteMany();
+    await prisma.supplier.deleteMany();
+    await prisma.payroll.deleteMany();
 
-  // ── Users & stores (after everything that references them) ──────────
-  await prisma.user.deleteMany();
-  await prisma.store.deleteMany();
+    // ── Users & stores (after everything that references them) ──────────
+    await prisma.user.deleteMany();
+    await prisma.store.deleteMany();
 
-  // ── Billing / packages ──────────────────────────────────────────────
-  await prisma.subscription.deleteMany();
-  await prisma.packageBundle.deleteMany();
-  await prisma.package.deleteMany();
-  await prisma.bundle.deleteMany();
-  await prisma.company.deleteMany();
+    // ── Billing / packages ──────────────────────────────────────────────
+    await prisma.subscription.deleteMany();
+    await prisma.packageBundle.deleteMany();
+    await prisma.package.deleteMany();
+    await prisma.bundle.deleteMany();
+    await prisma.company.deleteMany();
+  });
 };
 
 // Builds a full company + store + one user per role, ready to test against.

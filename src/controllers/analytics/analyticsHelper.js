@@ -72,8 +72,14 @@ export const calculateProfit = (saleItems) => {
   let profit = 0;
 
   saleItems.forEach((item) => {
-    profit +=
-      (toNumber(item.unitPrice) - toNumber(item.product.buyingPrice)) * toNumber(item.quantity);
+    // item.subtotal is already unitPrice × quantity, in transacted-unit
+    // terms (e.g. price-per-bundle × bundles). Cost must be converted to
+    // real base units consumed before comparing against it — buyingPrice
+    // is always a per-base-unit cost.
+    const revenue = toNumber(item.subtotal);
+    const baseUnitsUsed = toNumber(item.quantity) * toNumber(item.unitConversionFactor || 1);
+    const cost = toNumber(item.product.buyingPrice) * baseUnitsUsed;
+    profit += revenue - cost;
   });
 
   return profit;

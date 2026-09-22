@@ -25,12 +25,9 @@ export const dashboardAnalytics = async (companyId, storeId) => {
     },
   });
 
-  console.log("ANALYTICS FILTER", {
-    companyId,
-    storeId,
-  });
 
-  console.log("SALES FOUND", sales.length);
+
+ 
 
   const totalRevenue = sales.reduce((sum, sale) => sum + toNumber(sale.totalAmount), 0);
 
@@ -112,7 +109,7 @@ export const dashboardAnalytics = async (companyId, storeId) => {
           qty: 0,
         };
       }
-      productMap[item.productId].qty += item.quantity;
+      productMap[item.productId].qty += item.quantity * (item.unitConversionFactor || 1);
     });
   });
 

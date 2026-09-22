@@ -79,7 +79,7 @@ export const inventoryAnalytics = async (companyId, storeId) => {
         };
       }
 
-      soldMap[item.productId].sold += item.quantity;
+      soldMap[item.productId].sold += item.quantity * (item.unitConversionFactor || 1);
       soldMap[item.productId].revenue += toNumber(item.subtotal);
     });
   });

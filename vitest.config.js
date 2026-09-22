@@ -4,8 +4,8 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
-    testTimeout: 15000,
-    hookTimeout: 20000,
+    testTimeout: 45000,
+    hookTimeout: 60000,
     fileParallelism: false, // tests share one DB — run files sequentially
   },
 });

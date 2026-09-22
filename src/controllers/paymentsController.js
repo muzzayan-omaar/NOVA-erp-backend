@@ -107,7 +107,7 @@ export const getTransactionDetail = async (req, res) => {
       include: {
         user: { select: { id: true, name: true } },
         customer: { select: { id: true, name: true } },
-        saleItems: { include: { product: { select: { id: true, name: true } } } },
+        saleItems: { include: { product: { select: { id: true, name: true, unitType: true } }, productUnit: true } },
         payments: true,                    // ← added
       },
     });
