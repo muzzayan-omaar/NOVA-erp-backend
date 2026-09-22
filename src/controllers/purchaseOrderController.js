@@ -214,9 +214,13 @@ export const receivePurchaseOrder = async (req, res) => {
 
     const receivedMap = new Map((receivedItems || []).map((i) => [i.itemId, Number(i.quantityReceived)]));
 
+    // qty is always in TRANSACTED unit terms (e.g. "20" meaning 20 Bundles).
+    // baseUnitsReceived converts that to real stock movement.
     const resolvedItems = order.items.map((item) => {
       const qty = receivedMap.has(item.id) ? receivedMap.get(item.id) : item.quantityOrdered;
-      return { ...item, qtyReceived: qty, itemValue: qty * item.unitCost };
+      const conversionFactor = item.unitConversionFactor || 1;
+      const baseUnitsReceived = qty * conversionFactor;
+      return { ...item, qtyReceived: qty, baseUnitsReceived, itemValue: qty * item.unitCost };
     });
 
     const totalReceivedValue = resolvedItems.reduce((sum, i) => sum + i.itemValue, 0);
@@ -227,24 +231,33 @@ export const receivePurchaseOrder = async (req, res) => {
     const result = await prisma.$transaction(async (tx) => {
       for (const item of resolvedItems) {
         const qty = item.qtyReceived;
+        const baseUnitsReceived = item.baseUnitsReceived;
+        const conversionFactor = item.unitConversionFactor || 1;
 
         if (qty > 0) {
-          // This item's fair share of the shared freight/handling cost,
-          // proportional to how much of the shipment's value it represents.
+          // Extra freight/handling cost allocated to this line, proportional
+          // to its share of the shipment's total value — still a pure
+          // currency figure, unaffected by units.
           const allocatedShare =
             totalReceivedValue > 0 ? (item.itemValue / totalReceivedValue) * extraCost : 0;
-          const landedUnitCost = item.unitCost + allocatedShare / qty;
+
+          // Landed cost per the unit actually ordered (e.g. per Bundle) —
+          // matches unitCost's own meaning, for honest receipt-level display.
+          const landedCostPerTransactedUnit = item.unitCost + allocatedShare / qty;
+
+          // Converted down to a per-base-unit cost (e.g. per Piece) —
+          // this is what actually needs to blend into buyingPrice, since
+          // stock and buyingPrice are always tracked in base units.
+          const landedCostPerBaseUnit = landedCostPerTransactedUnit / conversionFactor;
 
           const existingStock = item.product.stockQuantity || 0;
           const existingBuyingPrice = item.product.buyingPrice || 0;
-          const newStock = existingStock + qty;
+          const newStock = existingStock + baseUnitsReceived;
 
-          // Weighted average — blends the true landed cost of this delivery
-          // with whatever cost basis the existing stock already had.
           const newWeightedBuyingPrice =
             newStock > 0
-              ? (existingStock * existingBuyingPrice + qty * landedUnitCost) / newStock
-              : landedUnitCost;
+              ? (existingStock * existingBuyingPrice + baseUnitsReceived * landedCostPerBaseUnit) / newStock
+              : landedCostPerBaseUnit;
 
           await tx.product.update({
             where: { id: item.productId },
@@ -257,7 +270,7 @@ export const receivePurchaseOrder = async (req, res) => {
           await tx.inventoryMovement.create({
             data: {
               companyId, storeId, productId: item.productId,
-              createdById: userId, type: "IN", quantity: qty,
+              createdById: userId, type: "IN", quantity: baseUnitsReceived,
               reason: `Received PO ${order.id.slice(0, 8)} from ${order.supplier.name}`,
             },
           });
@@ -266,7 +279,7 @@ export const receivePurchaseOrder = async (req, res) => {
             where: { id: item.id },
             data: {
               quantityReceived: qty,
-              landedUnitCost: Math.round(landedUnitCost * 100) / 100,
+              landedUnitCost: Math.round(landedCostPerTransactedUnit * 100) / 100,
             },
           });
         } else {
