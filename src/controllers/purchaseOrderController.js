@@ -17,7 +17,7 @@ export const getPurchaseOrders = async (req, res) => {
       include: {
         supplier: { select: { id: true, name: true, email: true } },
         createdBy: { select: { id: true, name: true } },
-        items: { include: { product: { select: { id: true, name: true } } } },
+        items: { include: { product: { select: { id: true, name: true } }, productUnit: true } },
       },
       orderBy: { createdAt: "desc" },
     });
