@@ -756,7 +756,7 @@ model StockTransit {
   receivedById     String?            @db.Uuid
   dispatchedAt     DateTime           @default(now())
   receivedAt       DateTime?
-
+   serials ProductSerial[]
   company      Company @relation(fields: [companyId], references: [id])
   sourceStore  Store   @relation("TransitSource", fields: [sourceStoreId], references: [id])
   targetStore  Store   @relation("TransitTarget", fields: [targetStoreId], references: [id])
@@ -881,6 +881,8 @@ model ProductSerial {
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
 
+    transitId String?       @db.Uuid
+  transit   StockTransit? @relation(fields: [transitId], references: [id])
   company  Company   @relation(fields: [companyId], references: [id])
   product  Product   @relation(fields: [productId], references: [id])
   store    Store     @relation(fields: [storeId], references: [id])
@@ -895,4 +897,5 @@ enum ProductSerialStatus {
   IN_TRANSIT
   SOLD
   RETURNED_DEFECTIVE
+  LOST
 }

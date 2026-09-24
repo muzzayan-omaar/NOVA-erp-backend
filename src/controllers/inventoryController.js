@@ -1,6 +1,6 @@
 import prisma from "../lib/prisma.js";
 import createAuditLog from "../services/auditService.js";
-
+import { createNotification } from "../modules/notifications/notification.service.js";
 /**
  * GET ALL INVENTORY MOVEMENTS — now filterable, and includes transfer store info
  */
@@ -119,7 +119,7 @@ export const adjustStock = async (req, res) => {
   }
 };
 
-import { createNotification } from "../modules/notifications/notification.service.js";
+
 
 /**
  * DISPATCH TRANSFER — decrements source stock immediately (goods are
@@ -384,5 +384,228 @@ export const receiveTransfer = async (req, res) => {
   } catch (error) {
     console.error("RECEIVE TRANSFER ERROR:", error);
     res.status(500).json({ message: "Failed to receive transfer" });
+  }
+};
+
+// POST /api/inventory/transfer-serials
+// Dispatches specific serialized units — each named serial flips to
+// IN_TRANSIT immediately, so it can't be sold at the source store while
+// supposedly on its way elsewhere.
+export const dispatchSerializedTransfer = async (req, res) => {
+  try {
+    const { productId, targetStoreId, serialIds, reason } = req.body;
+    const { companyId, storeId: sourceStoreId, userId } = req.context;
+
+    if (!productId || !targetStoreId || !Array.isArray(serialIds) || serialIds.length === 0) {
+      return res.status(400).json({ message: "Product, destination store, and at least one serial are required" });
+    }
+    if (targetStoreId === sourceStoreId) {
+      return res.status(400).json({ message: "Choose a different store to transfer to" });
+    }
+
+    const targetStore = await prisma.store.findFirst({ where: { id: targetStoreId, companyId, isActive: true } });
+    if (!targetStore) return res.status(404).json({ message: "Destination store not found" });
+
+    const source = await prisma.product.findFirst({ where: { id: productId, companyId, storeId: sourceStoreId } });
+    if (!source) return res.status(404).json({ message: "Product not found in current store" });
+
+    const serials = await prisma.productSerial.findMany({
+      where: { id: { in: serialIds }, companyId, storeId: sourceStoreId, productId },
+    });
+
+    if (serials.length !== serialIds.length) {
+      return res.status(404).json({ message: "One or more serials were not found for this product" });
+    }
+    const notInStock = serials.filter((s) => s.status !== "IN_STOCK");
+    if (notInStock.length > 0) {
+      return res.status(400).json({
+        message: `Not available: ${notInStock.map((s) => s.serialNumber).join(", ")}`,
+      });
+    }
+
+    const transit = await prisma.$transaction(async (tx) => {
+      const newTransit = await tx.stockTransit.create({
+        data: {
+          companyId, sourceStoreId, targetStoreId, productId,
+          mode: "SERIAL",
+          quantitySent: serials.length,
+          reason, dispatchedById: userId,
+        },
+      });
+
+      await tx.productSerial.updateMany({
+        where: { id: { in: serialIds } },
+        data: { status: "IN_TRANSIT", transitId: newTransit.id },
+      });
+
+      await tx.product.update({
+        where: { id: productId },
+        data: { stockQuantity: { decrement: serials.length } },
+      });
+
+      await tx.inventoryMovement.create({
+        data: {
+          companyId, storeId: sourceStoreId, productId,
+          createdById: userId, type: "TRANSFER_OUT", quantity: serials.length,
+          reason: reason || `Dispatched to ${targetStore.name}`,
+          sourceStoreId, targetStoreId,
+        },
+      });
+
+      return newTransit;
+    });
+
+    await createAuditLog({
+      userId, companyId, storeId: sourceStoreId,
+      action: "SERIAL_TRANSFER_DISPATCHED",
+      entityType: "stock_transit",
+      entityId: transit.id,
+      metadata: { productName: source.name, serialNumbers: serials.map((s) => s.serialNumber), targetStoreName: targetStore.name },
+    });
+
+    res.status(201).json({ message: "Dispatched — awaiting receipt at destination", transit });
+  } catch (error) {
+    console.error("DISPATCH SERIAL TRANSFER ERROR:", error);
+    res.status(500).json({ message: "Failed to dispatch serialized transfer" });
+  }
+};
+
+// POST /api/inventory/transits/:id/receive-serials
+// The receiving manager confirms exactly which dispatched serials
+// physically arrived. Anything dispatched but not confirmed is marked
+// LOST — a real, valued discrepancy, not silently dropped.
+export const receiveSerializedTransfer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { receivedSerialIds } = req.body;
+    const { companyId, storeId, userId } = req.context;
+
+    const transit = await prisma.stockTransit.findFirst({
+      where: { id, companyId, targetStoreId: storeId, mode: "SERIAL" },
+      include: { product: true, sourceStore: true, serials: true },
+    });
+
+    if (!transit) return res.status(404).json({ message: "Transit not found for this store" });
+    if (transit.status !== "IN_TRANSIT") {
+      return res.status(400).json({ message: "This transfer has already been resolved" });
+    }
+
+    const dispatchedIds = transit.serials.map((s) => s.id);
+    const receivedIds = (receivedSerialIds || []).filter((id) => dispatchedIds.includes(id));
+    const missingSerials = transit.serials.filter((s) => !receivedIds.includes(s.id));
+    const hasVariance = missingSerials.length > 0;
+
+    const result = await prisma.$transaction(async (tx) => {
+      const familyId = transit.product.linkedFamilyId || transit.product.id;
+
+      if (!transit.product.linkedFamilyId) {
+        await tx.product.update({ where: { id: transit.product.id }, data: { linkedFamilyId: familyId } });
+      }
+
+      let destinationProduct = await tx.product.findFirst({
+        where: { companyId, storeId, linkedFamilyId: familyId },
+      });
+
+      if (!destinationProduct && receivedIds.length > 0) {
+        let sku = `${transit.product.sku}-${storeId.slice(0, 4).toUpperCase()}`;
+        let attempt = 0;
+        while (await tx.product.findFirst({ where: { companyId, sku } })) {
+          attempt++;
+          sku = `${transit.product.sku}-${storeId.slice(0, 4).toUpperCase()}${attempt}`;
+        }
+        destinationProduct = await tx.product.create({
+          data: {
+            companyId, storeId,
+            name: transit.product.name, sku,
+            barcode: transit.product.barcode,
+            buyingPrice: transit.product.buyingPrice,
+            sellingPrice: transit.product.sellingPrice,
+            unitType: transit.product.unitType,
+            isSerialized: true,
+            stockQuantity: 0,
+            linkedFamilyId: familyId,
+          },
+        });
+      }
+
+      if (receivedIds.length > 0) {
+        await tx.productSerial.updateMany({
+          where: { id: { in: receivedIds } },
+          data: { productId: destinationProduct.id, storeId, status: "IN_STOCK" },
+        });
+
+        await tx.product.update({
+          where: { id: destinationProduct.id },
+          data: { stockQuantity: { increment: receivedIds.length } },
+        });
+
+        await tx.inventoryMovement.create({
+          data: {
+            companyId, storeId, productId: destinationProduct.id,
+            createdById: userId, type: "TRANSFER_IN", quantity: receivedIds.length,
+            reason: `Received from ${transit.sourceStore.name}${hasVariance ? " (variance — see missing serials)" : ""}`,
+            sourceStoreId: transit.sourceStoreId, targetStoreId: storeId,
+          },
+        });
+      }
+
+      if (hasVariance) {
+        await tx.productSerial.updateMany({
+          where: { id: { in: missingSerials.map((s) => s.id) } },
+          data: { status: "LOST" },
+        });
+      }
+
+      const updatedTransit = await tx.stockTransit.update({
+        where: { id },
+        data: {
+          quantityReceived: receivedIds.length,
+          status: hasVariance ? "VARIANCE" : "RECEIVED",
+          receivedById: userId,
+          receivedAt: new Date(),
+        },
+      });
+
+      return { updatedTransit, destinationProduct };
+    });
+
+    const lostValue = missingSerials.length * (transit.product.buyingPrice || 0);
+
+    await createAuditLog({
+      userId, companyId, storeId,
+      action: hasVariance ? "SERIAL_TRANSFER_VARIANCE" : "SERIAL_TRANSFER_RECEIVED",
+      entityType: "stock_transit",
+      entityId: id,
+      metadata: {
+        productName: transit.product.name,
+        receivedSerials: receivedIds.length,
+        lostSerialNumbers: missingSerials.map((s) => s.serialNumber),
+        lostValue,
+      },
+    });
+
+    if (hasVariance) {
+      const gms = await prisma.user.findMany({
+        where: { companyId, role: "GENERAL_MANAGER", isActive: true },
+        select: { id: true },
+      });
+      await Promise.all(
+        gms.map((gm) =>
+          createNotification({
+            companyId, storeId, userId: gm.id,
+            title: "Serialized Stock Missing in Transit",
+            message: `${transit.product.name}: ${missingSerials.map((s) => s.serialNumber).join(", ")} never arrived — UGX ${lostValue.toLocaleString()} lost.`,
+            type: "INVENTORY",
+            priority: "HIGH",
+            uniqueKey: `SERIAL_TRANSIT_VARIANCE_${id}`,
+          })
+        )
+      );
+    }
+
+    res.json({ message: hasVariance ? "Received with missing serials flagged" : "All units received", ...result, lostValue });
+  } catch (error) {
+    console.error("RECEIVE SERIAL TRANSFER ERROR:", error);
+    res.status(500).json({ message: "Failed to receive serialized transfer" });
   }
 };
