@@ -231,6 +231,7 @@ export const getTransits = async (req, res) => {
         targetStore: { select: { name: true } },
         dispatchedBy: { select: { name: true } },
         receivedBy: { select: { name: true } },
+        serials: { select: { id: true, serialNumber: true, status: true } },
       },
       orderBy: { dispatchedAt: "desc" },
     });
