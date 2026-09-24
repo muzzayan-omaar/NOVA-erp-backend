@@ -7,6 +7,8 @@ import {
   dispatchTransfer,
   getTransits,
   receiveTransfer,
+  dispatchSerializedTransfer, 
+  receiveSerializedTransfer,
 } from "../controllers/inventoryController.js";
 import checkPermission from "../middleware/checkPermission.js";
 import checkFeatureAccess from "../middleware/checkFeatureAccess.js";
@@ -50,5 +52,19 @@ router.post(
   checkFeatureAccess("inventory"),
   receiveTransfer
 );
+router.post(
+  "/transfer-serials",
+  protect,
+  checkPermission("inventory"),
+  checkFeatureAccess("inventory"),
+  dispatchSerializedTransfer
+);
 
+router.post(
+  "/transits/:id/receive-serials",
+  protect,
+  checkPermission("inventory"),
+  checkFeatureAccess("inventory"),
+  receiveSerializedTransfer
+);
 export default router;
