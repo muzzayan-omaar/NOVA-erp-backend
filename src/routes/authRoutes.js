@@ -1,5 +1,11 @@
 import express from "express";
-import { loginUser, getCurrentUser, changePassword } from "../controllers/authController.js";
+import {
+  loginUser,
+  getCurrentUser,
+  changePassword,
+  refreshAccessToken,
+  logoutUser,
+} from "../controllers/authController.js";
 
 import protect from "../middleware/protect.js";
 import { switchStore } from "../controllers/storeController.js";
@@ -10,6 +16,8 @@ import { loginSchema, changePasswordSchema } from "../schemas/authSchemas.js";
 const router = express.Router();
 
 router.post("/login", authLimiter, validate(loginSchema), loginUser);
+router.post("/refresh", refreshAccessToken);
+router.post("/logout", logoutUser);
 
 router.post("/switch-store", protect, switchStore);
 router.get("/me", protect, getCurrentUser);

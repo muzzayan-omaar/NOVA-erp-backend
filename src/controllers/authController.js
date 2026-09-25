@@ -1,13 +1,31 @@
 import bcrypt from "bcryptjs";
 import prisma from "../lib/prisma.js";
-import generateToken from "../utils/generateToken.js";
 import { createTrialSubscription } from "../services/subscriptionService.js";
 import { createNotification } from "../modules/notifications/notification.service.js";
 import { generateUniqueBusinessCode } from "../utils/generateBusinessCode.js";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+  hashRefreshToken,
+  REFRESH_COOKIE_NAME,
+  REFRESH_COOKIE_OPTIONS,
+} from "../utils/tokens.js";
 
 const sanitizeUser = (user) => {
   const { passwordHash, ...safe } = user;
   return safe;
+};
+
+const issueSession = async (res, user, userAgent) => {
+  const accessToken = generateAccessToken(user);
+  const { raw, hash, expiresAt } = generateRefreshToken();
+
+  await prisma.refreshToken.create({
+    data: { userId: user.id, tokenHash: hash, expiresAt, userAgent },
+  });
+
+  res.cookie(REFRESH_COOKIE_NAME, raw, REFRESH_COOKIE_OPTIONS);
+  return accessToken;
 };
 
 export const registerStoreOwner = async (req, res) => {
@@ -21,7 +39,6 @@ export const registerStoreOwner = async (req, res) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-
     const businessCode = await generateUniqueBusinessCode(prisma, companyName);
 
     const company = await prisma.company.create({
@@ -31,12 +48,7 @@ export const registerStoreOwner = async (req, res) => {
     await createTrialSubscription(company.id);
 
     const existingUser = await prisma.user.findUnique({
-      where: {
-        companyId_email: {
-          companyId: company.id,
-          email,
-        },
-      },
+      where: { companyId_email: { companyId: company.id, email } },
     });
 
     if (existingUser) {
@@ -44,12 +56,7 @@ export const registerStoreOwner = async (req, res) => {
     }
 
     const store = await prisma.store.create({
-      data: {
-        companyId: company.id,
-        name: "Head Office",
-        location,
-        isHeadOffice: true,
-      },
+      data: { companyId: company.id, name: "Head Office", location, isHeadOffice: true },
     });
 
     const user = await prisma.user.create({
@@ -64,23 +71,15 @@ export const registerStoreOwner = async (req, res) => {
       },
     });
 
-    const token = generateToken(user);
+    const token = await issueSession(res, user, req.headers["user-agent"]);
 
-    res.status(201).json({
-      token,
-      user: sanitizeUser(user),
-      company,
-      store,
-    });
+    res.status(201).json({ token, user: sanitizeUser(user), company, store });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server Error" });
   }
 };
 
-/**
- * LOGIN
- */
 export const loginUser = async (req, res) => {
   try {
     const { businessCode, email, password } = req.body;
@@ -98,9 +97,7 @@ export const loginUser = async (req, res) => {
     }
 
     if (!company.isActive) {
-      return res.status(403).json({
-        message: "This account has been suspended. Contact support.",
-      });
+      return res.status(403).json({ message: "This account has been suspended. Contact support." });
     }
 
     const user = await prisma.user.findUnique({
@@ -116,11 +113,7 @@ export const loginUser = async (req, res) => {
 
     if (!validPassword) {
       const gms = await prisma.user.findMany({
-        where: {
-          companyId: user.companyId,
-          role: "GENERAL_MANAGER",
-          isActive: true,
-        },
+        where: { companyId: user.companyId, role: "GENERAL_MANAGER", isActive: true },
         select: { id: true },
       });
 
@@ -142,7 +135,7 @@ export const loginUser = async (req, res) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    const token = generateToken(user);
+    const token = await issueSession(res, user, req.headers["user-agent"]);
 
     res.json({ token, user: sanitizeUser(user) });
   } catch (err) {
@@ -151,36 +144,99 @@ export const loginUser = async (req, res) => {
   }
 };
 
+// POST /api/auth/refresh — the access token is expired, this is the
+// legitimate way a real session stays alive without the user noticing.
+// Refresh tokens are rotated on every use: the old one is revoked and a
+// new one issued, limiting how long a leaked refresh token stays useful.
+export const refreshAccessToken = async (req, res) => {
+  try {
+    const rawToken = req.cookies?.[REFRESH_COOKIE_NAME];
+    if (!rawToken) {
+      return res.status(401).json({ message: "No refresh token" });
+    }
+
+    const tokenHash = hashRefreshToken(rawToken);
+    const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } });
+
+    if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+      res.clearCookie(REFRESH_COOKIE_NAME, { path: "/api/auth" });
+      return res.status(401).json({ message: "Session expired — please log in again" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: stored.userId },
+      include: { company: true, store: true },
+    });
+
+    if (!user || !user.isActive) {
+      return res.status(401).json({ message: "Session expired — please log in again" });
+    }
+
+    // Re-checked on every refresh — matches the existing mid-session
+    // suspension enforcement used everywhere else in the app.
+    if (!user.company.isActive) {
+      return res.status(403).json({ message: "This account has been suspended. Contact support." });
+    }
+
+    const { raw, hash, expiresAt } = generateRefreshToken();
+
+    await prisma.$transaction([
+      prisma.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date() } }),
+      prisma.refreshToken.create({
+        data: { userId: user.id, tokenHash: hash, expiresAt, userAgent: req.headers["user-agent"] },
+      }),
+    ]);
+
+    res.cookie(REFRESH_COOKIE_NAME, raw, REFRESH_COOKIE_OPTIONS);
+
+    const accessToken = generateAccessToken(user);
+    res.json({ token: accessToken, user: sanitizeUser(user) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to refresh session" });
+  }
+};
+
+// POST /api/auth/logout — revokes the real, server-side session record.
+// Clearing sessionStorage on the frontend alone was never a real logout;
+// the refresh token stayed valid until it naturally expired.
+export const logoutUser = async (req, res) => {
+  try {
+    const rawToken = req.cookies?.[REFRESH_COOKIE_NAME];
+    if (rawToken) {
+      const tokenHash = hashRefreshToken(rawToken);
+      await prisma.refreshToken.updateMany({
+        where: { tokenHash },
+        data: { revokedAt: new Date() },
+      });
+    }
+    res.clearCookie(REFRESH_COOKIE_NAME, { path: "/api/auth" });
+    res.json({ message: "Logged out" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to log out" });
+  }
+};
+
 export const getCurrentUser = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
-      where: {
-        id: req.user.id,
-      },
-      include: {
-        company: true,
-        store: true,
-      },
+      where: { id: req.user.id },
+      include: { company: true, store: true },
     });
 
     if (!user) {
-      return res.status(404).json({
-        message: "User not found",
-      });
+      return res.status(404).json({ message: "User not found" });
     }
 
     if (!user.company.isActive) {
-      return res.status(403).json({
-        message: "This account has been suspended. Contact support.",
-      });
+      return res.status(403).json({ message: "This account has been suspended. Contact support." });
     }
 
     res.json(user);
   } catch (error) {
     console.error(error);
-    res.status(500).json({
-      message: "Server Error",
-    });
+    res.status(500).json({ message: "Server Error" });
   }
 };
 
@@ -190,15 +246,11 @@ export const changePassword = async (req, res) => {
     const { userId } = req.context;
 
     if (!currentPassword || !newPassword) {
-      return res.status(400).json({
-        message: "Current and new password are required",
-      });
+      return res.status(400).json({ message: "Current and new password are required" });
     }
 
     if (newPassword.length < 8) {
-      return res.status(400).json({
-        message: "New password must be at least 8 characters",
-      });
+      return res.status(400).json({ message: "New password must be at least 8 characters" });
     }
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
