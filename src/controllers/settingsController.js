@@ -99,3 +99,19 @@ export const revokeAllSessions = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// GET /api/settings/thresholds — lightweight, any authenticated user.
+// Unlike /company, this exposes nothing sensitive — just the two numbers
+// operational screens (like Inventory) need regardless of role.
+export const getThresholds = async (req, res) => {
+  try {
+    const company = await prisma.company.findUnique({
+      where: { id: req.context.companyId },
+      select: { vatRate: true, lowStockThreshold: true },
+    });
+    res.json(company);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
+};

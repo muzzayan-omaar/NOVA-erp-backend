@@ -1,5 +1,4 @@
 import prisma from "../../lib/prisma.js";
-
 import { toNumber } from "./analyticsHelper.js";
 
 export const inventoryAnalytics = async (companyId, storeId) => {
@@ -10,6 +9,13 @@ export const inventoryAnalytics = async (companyId, storeId) => {
   if (storeId !== "ALL") {
     where.storeId = storeId;
   }
+
+  // Company low-stock threshold (falls back to 10)
+  const companySettings = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: { lowStockThreshold: true },
+  });
+  const lowStockThreshold = companySettings?.lowStockThreshold ?? 10;
 
   // Movements
   const movements = await prisma.inventoryMovement.findMany({
@@ -44,19 +50,24 @@ export const inventoryAnalytics = async (companyId, storeId) => {
   });
 
   const inventoryValue = products.reduce(
-    (sum, product) => sum + toNumber(product.buyingPrice) * toNumber(product.stockQuantity),
+    (sum, product) =>
+      sum + toNumber(product.buyingPrice) * toNumber(product.stockQuantity),
     0
   );
 
-  const lowStock = products.filter((product) => toNumber(product.stockQuantity) <= 10);
+  const lowStock = products.filter(
+    (product) => toNumber(product.stockQuantity) <= lowStockThreshold
+  );
 
-  const overStock = products.filter((product) => toNumber(product.stockQuantity) >= 100);
+  const overStock = products.filter(
+    (product) => toNumber(product.stockQuantity) >= 100
+  );
 
   // Sales – only completed ones
   const sales = await prisma.sale.findMany({
     where: {
       ...where,
-      status: "COMPLETED", // ← added
+      status: "COMPLETED",
     },
     include: {
       saleItems: {
@@ -79,7 +90,8 @@ export const inventoryAnalytics = async (companyId, storeId) => {
         };
       }
 
-      soldMap[item.productId].sold += item.quantity * (item.unitConversionFactor || 1);
+      soldMap[item.productId].sold +=
+        item.quantity * (item.unitConversionFactor || 1);
       soldMap[item.productId].revenue += toNumber(item.subtotal);
     });
   });
@@ -91,12 +103,19 @@ export const inventoryAnalytics = async (companyId, storeId) => {
   const soldIds = Object.keys(soldMap);
 
   const deadStock = products.filter(
-    (product) => !soldIds.includes(product.id) && toNumber(product.stockQuantity) > 0
+    (product) =>
+      !soldIds.includes(product.id) && toNumber(product.stockQuantity) > 0
   );
 
-  const totalSold = Object.values(soldMap).reduce((sum, item) => sum + item.sold, 0);
+  const totalSold = Object.values(soldMap).reduce(
+    (sum, item) => sum + item.sold,
+    0
+  );
 
-  const totalStock = products.reduce((sum, product) => sum + toNumber(product.stockQuantity), 0);
+  const totalStock = products.reduce(
+    (sum, product) => sum + toNumber(product.stockQuantity),
+    0
+  );
 
   const inventoryTurnover = totalStock === 0 ? 0 : totalSold / totalStock;
 

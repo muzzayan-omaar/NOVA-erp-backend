@@ -7,6 +7,7 @@ import {
   getMySessions,
   revokeSession,
   revokeAllSessions,
+  getThresholds, 
 } from "../controllers/settingsController.js";
 
 const router = express.Router();
@@ -22,5 +23,6 @@ router.patch("/company", checkPermission("audit"), updateCompanySettings);
 router.get("/sessions", getMySessions);
 router.delete("/sessions/:id", revokeSession);
 router.post("/sessions/revoke-all", revokeAllSessions);
+router.get("/thresholds", getThresholds);
 
 export default router;
