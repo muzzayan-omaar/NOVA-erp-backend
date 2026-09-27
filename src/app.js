@@ -28,6 +28,7 @@ import supportRoutes from "./routes/supportRoutes.js";
 import quoteRoutes from "./routes/quoteRoutes.js";
 import backupRoutes from "./routes/backupRoutes.js";
 import reconciliationRoutes from "./routes/reconciliationRoutes.js";
+import settingsRoutes from "./routes/settingsRoutes.js";
 
 import notificationRoutes from "./modules/notifications/notification.routes.js";
 import { notFoundHandler, errorHandler } from "./middleware/errorHandler.js";
@@ -81,6 +82,7 @@ app.use("/api/purchase-orders", purchaseOrderRoutes);
 app.use("/api/quotes", quoteRoutes);
 app.use("/api/backup", backupRoutes);
 app.use("/api/reconciliation", reconciliationRoutes);
+app.use("/api/settings", settingsRoutes);
 app.use(notFoundHandler);
 app.use(errorHandler);
 export default app;

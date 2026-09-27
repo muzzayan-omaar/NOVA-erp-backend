@@ -382,13 +382,18 @@ export const getVatSummaryReport = async (req, res) => {
     const taxableSales = sales.reduce((sum, s) => sum + (s.subtotal || 0), 0);
     const vatCollected = sales.reduce((sum, s) => sum + (s.vatAmount || 0), 0);
 
-    res.json({
-      taxableSales,
-      vatCollected,
-      totalSales: taxableSales + vatCollected,
-      transactionCount: sales.length,
-      vatRate: 0.18,
-    });
+    const company = await prisma.company.findUnique({
+  where: { id: companyId },
+  select: { vatRate: true },
+});
+
+res.json({
+  taxableSales,
+  vatCollected,
+  totalSales: taxableSales + vatCollected,
+  transactionCount: sales.length,
+  vatRate: company?.vatRate ?? 0.18,
+});
   } catch (err) {
     console.error("VAT SUMMARY ERROR:", err);
     res.status(500).json({ message: err.message });

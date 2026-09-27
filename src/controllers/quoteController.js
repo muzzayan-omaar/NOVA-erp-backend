@@ -2,8 +2,6 @@ import prisma from "../lib/prisma.js";
 import createAuditLog from "../services/auditService.js";
 import { sendEmail } from "../utils/mailer.js";
 
-const VAT_RATE = 0.18;
-
 // CREATE QUOTE — a pro-forma, no stock touched, no fiscal receipt
 export const createQuote = async (req, res) => {
   try {
@@ -33,6 +31,12 @@ export const createQuote = async (req, res) => {
         subtotal: lineSubtotal,
       };
     });
+
+    const companyForVat = await prisma.company.findUnique({
+      where: { id: companyId },
+      select: { vatRate: true },
+    });
+    const VAT_RATE = companyForVat?.vatRate ?? 0.18;
 
     const vatAmount = Math.round(subtotal * VAT_RATE * 100) / 100;
     const totalAmount = subtotal + vatAmount;
@@ -81,7 +85,11 @@ export const getQuotes = async (req, res) => {
 
     const quotes = await prisma.quote.findMany({
       where,
-      include: { customer: true, user: { select: { name: true } }, items: true },
+      include: {
+        customer: true,
+        user: { select: { name: true } },
+        items: true,
+      },
       orderBy: { createdAt: "desc" },
     });
     res.json(quotes);
@@ -120,13 +128,21 @@ export const updateQuote = async (req, res) => {
     const { customerId, items, notes, validUntil } = req.body;
     const { companyId, storeId, userId } = req.context;
 
-    const existing = await prisma.quote.findFirst({ where: { id, companyId, storeId } });
+    const existing = await prisma.quote.findFirst({
+      where: { id, companyId, storeId },
+    });
     if (!existing) return res.status(404).json({ message: "Quote not found" });
     if (["CONVERTED", "CANCELLED"].includes(existing.status)) {
-      return res.status(400).json({ message: `This quote is already ${existing.status.toLowerCase()}` });
+      return res
+        .status(400)
+        .json({ message: `This quote is already ${existing.status.toLowerCase()}` });
     }
 
-    let updateData = { customerId, notes, validUntil: validUntil ? new Date(validUntil) : null };
+    let updateData = {
+      customerId,
+      notes,
+      validUntil: validUntil ? new Date(validUntil) : null,
+    };
 
     if (Array.isArray(items) && items.length > 0) {
       const productIds = items.map((i) => i.productId);
@@ -147,6 +163,12 @@ export const updateQuote = async (req, res) => {
           subtotal: lineSubtotal,
         };
       });
+
+      const companyForVat = await prisma.company.findUnique({
+        where: { id: companyId },
+        select: { vatRate: true },
+      });
+      const VAT_RATE = companyForVat?.vatRate ?? 0.18;
 
       const vatAmount = Math.round(subtotal * VAT_RATE * 100) / 100;
 
@@ -196,7 +218,9 @@ export const sendQuote = async (req, res) => {
     });
     if (!quote) return res.status(404).json({ message: "Quote not found" });
     if (quote.status !== "DRAFT") {
-      return res.status(400).json({ message: `Quote is already ${quote.status}` });
+      return res
+        .status(400)
+        .json({ message: `Quote is already ${quote.status}` });
     }
 
     let emailResult = { sent: false, reason: "NO_CUSTOMER_EMAIL" };
@@ -226,7 +250,10 @@ export const sendQuote = async (req, res) => {
       });
     }
 
-    const updated = await prisma.quote.update({ where: { id }, data: { status: "SENT" } });
+    const updated = await prisma.quote.update({
+      where: { id },
+      data: { status: "SENT" },
+    });
 
     await createAuditLog({
       userId,
@@ -251,13 +278,20 @@ export const cancelQuote = async (req, res) => {
     const { id } = req.params;
     const { companyId, storeId, userId } = req.context;
 
-    const quote = await prisma.quote.findFirst({ where: { id, companyId, storeId } });
+    const quote = await prisma.quote.findFirst({
+      where: { id, companyId, storeId },
+    });
     if (!quote) return res.status(404).json({ message: "Quote not found" });
     if (quote.status === "CONVERTED") {
-      return res.status(400).json({ message: "This quote has already been converted to a sale" });
+      return res
+        .status(400)
+        .json({ message: "This quote has already been converted to a sale" });
     }
 
-    const updated = await prisma.quote.update({ where: { id }, data: { status: "CANCELLED" } });
+    const updated = await prisma.quote.update({
+      where: { id },
+      data: { status: "CANCELLED" },
+    });
 
     await createAuditLog({
       userId,
@@ -284,7 +318,11 @@ export const cancelQuote = async (req, res) => {
 export const convertQuote = async (req, res) => {
   try {
     const { id } = req.params;
-    const { paymentMethod = "CASH", payments = null, clientReferenceId = null } = req.body;
+    const {
+      paymentMethod = "CASH",
+      payments = null,
+      clientReferenceId = null,
+    } = req.body;
     const { companyId, storeId, userId } = req.context;
 
     const quote = await prisma.quote.findFirst({
@@ -293,7 +331,9 @@ export const convertQuote = async (req, res) => {
     });
     if (!quote) return res.status(404).json({ message: "Quote not found" });
     if (quote.status === "CONVERTED") {
-      return res.status(400).json({ message: "This quote has already been converted" });
+      return res
+        .status(400)
+        .json({ message: "This quote has already been converted" });
     }
     if (quote.status === "CANCELLED") {
       return res.status(400).json({ message: "This quote was cancelled" });
@@ -311,7 +351,9 @@ export const convertQuote = async (req, res) => {
       const current = stockMap.get(item.productId);
       if (!current || current.stockQuantity < item.quantity) {
         return res.status(400).json({
-          message: `Insufficient stock for ${item.product.name} — available: ${current?.stockQuantity ?? 0}, needed: ${item.quantity}`,
+          message: `Insufficient stock for ${item.product.name} — available: ${
+            current?.stockQuantity ?? 0
+          }, needed: ${item.quantity}`,
         });
       }
     }
@@ -319,7 +361,11 @@ export const convertQuote = async (req, res) => {
     let splitEntries = null;
     if (payments && Array.isArray(payments) && payments.length > 0) {
       splitEntries = payments
-        .map((p) => ({ method: p.method, amount: Number(p.amount), reference: p.reference || null }))
+        .map((p) => ({
+          method: p.method,
+          amount: Number(p.amount),
+          reference: p.reference || null,
+        }))
         .filter((p) => p.amount > 0);
 
       const splitSum = splitEntries.reduce((sum, p) => sum + p.amount, 0);
@@ -331,26 +377,34 @@ export const convertQuote = async (req, res) => {
     }
 
     const creditPortion = splitEntries
-      ? splitEntries.filter((p) => p.method === "CREDIT").reduce((sum, p) => sum + p.amount, 0)
+      ? splitEntries
+          .filter((p) => p.method === "CREDIT")
+          .reduce((sum, p) => sum + p.amount, 0)
       : paymentMethod === "CREDIT"
-        ? quote.totalAmount
-        : 0;
+      ? quote.totalAmount
+      : 0;
 
     if (creditPortion > 0) {
       if (!quote.customerId) {
-        return res.status(400).json({ message: "A customer is required for the credit portion of this sale" });
+        return res.status(400).json({
+          message: "A customer is required for the credit portion of this sale",
+        });
       }
       if (quote.customer.creditLimit > 0) {
         const projected = quote.customer.totalCredit + creditPortion;
         if (projected > quote.customer.creditLimit) {
           return res.status(400).json({
-            message: `This would put ${quote.customer.name} at UGX ${projected.toLocaleString()}, over their credit limit of UGX ${quote.customer.creditLimit.toLocaleString()}.`,
+            message: `This would put ${
+              quote.customer.name
+            } at UGX ${projected.toLocaleString()}, over their credit limit of UGX ${quote.customer.creditLimit.toLocaleString()}.`,
           });
         }
       }
     }
 
-    const distinctMethods = splitEntries ? new Set(splitEntries.map((p) => p.method)) : null;
+    const distinctMethods = splitEntries
+      ? new Set(splitEntries.map((p) => p.method))
+      : null;
     const storedPaymentMethod = splitEntries
       ? distinctMethods.size > 1
         ? "MIXED"
@@ -409,7 +463,9 @@ export const convertQuote = async (req, res) => {
         await tx.inventoryMovement.createMany({ data: movements });
 
         const paymentLines =
-          splitEntries || [{ method: paymentMethod, amount: quote.totalAmount, reference: null }];
+          splitEntries || [
+            { method: paymentMethod, amount: quote.totalAmount, reference: null },
+          ];
 
         await tx.salePayment.createMany({
           data: paymentLines.map((p) => ({

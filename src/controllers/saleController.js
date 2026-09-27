@@ -158,7 +158,11 @@ export const createSale = async (req, res) => {
       });
     }
 
-    const vatRate = 0.18;
+    const companyForVat = await prisma.company.findUnique({
+  where: { id: req.context.companyId },
+  select: { vatRate: true },
+});
+const vatRate = companyForVat?.vatRate ?? 0.18;
     const vatAmount = Math.round(subtotal * vatRate * 100) / 100;
     const totalAmount = subtotal + vatAmount - Number(discount);
 
