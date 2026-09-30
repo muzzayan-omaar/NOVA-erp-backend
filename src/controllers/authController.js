@@ -28,6 +28,11 @@ const issueSession = async (res, user, userAgent) => {
   return accessToken;
 };
 
+// NOTE: unreachable — no route currently mounts this (self-registration
+// was deliberately disabled). Left here rather than deleted in case a
+// deliberate future self-serve tier resurrects it, but it predates the
+// Staff ID login system and would need an EmployeeProfile + staffId added
+// before it could actually work if ever re-enabled.
 export const registerStoreOwner = async (req, res) => {
   try {
     const { companyName, location, name, email, password, phone, country } = req.body;
@@ -47,14 +52,6 @@ export const registerStoreOwner = async (req, res) => {
 
     await createTrialSubscription(company.id);
 
-    const existingUser = await prisma.user.findUnique({
-      where: { companyId_email: { companyId: company.id, email } },
-    });
-
-    if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
-    }
-
     const store = await prisma.store.create({
       data: { companyId: company.id, name: "Head Office", location, isHeadOffice: true },
     });
@@ -71,41 +68,54 @@ export const registerStoreOwner = async (req, res) => {
       },
     });
 
-    const token = await issueSession(res, user, req.headers["user-agent"]);
-
-    res.status(201).json({ token, user: sanitizeUser(user), company, store });
+    res.status(201).json({ message: "Registered — this endpoint is not currently reachable via any route.", user: sanitizeUser(user), company, store });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server Error" });
   }
 };
 
+// POST /api/auth/login — unified for every role. Store Code identifies
+// the company + store; Staff ID identifies the person (globally unique
+// on its own); the two together are checked to actually match, which is
+// what makes Store Code a real second factor rather than decoration.
 export const loginUser = async (req, res) => {
   try {
-    const { businessCode, email, password } = req.body;
+    const { storeCode, staffId, password } = req.body;
 
-    if (!businessCode) {
-      return res.status(400).json({ message: "Business code is required for login" });
+    if (!storeCode || !staffId || !password) {
+      return res.status(400).json({ message: "Store code, staff ID, and password are required" });
     }
 
-    const company = await prisma.company.findUnique({
-      where: { businessCode: businessCode.trim().toUpperCase() },
+    const store = await prisma.store.findUnique({
+      where: { storeCode: storeCode.trim().toUpperCase() },
+      include: { company: true },
     });
 
-    if (!company) {
+    if (!store) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    if (!company.isActive) {
+    if (!store.company.isActive) {
       return res.status(403).json({ message: "This account has been suspended. Contact support." });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { companyId_email: { companyId: company.id, email } },
-      include: { company: true, store: true },
+    const profile = await prisma.employeeProfile.findUnique({
+      where: { staffId: staffId.trim().toUpperCase() },
+      include: { user: { include: { store: true, company: true } } },
     });
 
-    if (!user || !user.isActive) {
+    if (!profile || !profile.user) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    const user = profile.user;
+
+    if (user.storeId !== store.id) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    if (!user.isActive) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
@@ -124,7 +134,7 @@ export const loginUser = async (req, res) => {
             storeId: null,
             userId: gm.id,
             title: "Failed Login Attempt",
-            message: `A failed login attempt was made for ${user.email}.`,
+            message: `A failed login attempt was made for staff ID ${staffId.toUpperCase()} (${user.name}).`,
             type: "FAILED_LOGIN",
             priority: "MEDIUM",
             uniqueKey: `FAILED_LOGIN_${user.id}_${new Date().toISOString().slice(0, 13)}`,
@@ -144,10 +154,6 @@ export const loginUser = async (req, res) => {
   }
 };
 
-// POST /api/auth/refresh — the access token is expired, this is the
-// legitimate way a real session stays alive without the user noticing.
-// Refresh tokens are rotated on every use: the old one is revoked and a
-// new one issued, limiting how long a leaked refresh token stays useful.
 export const refreshAccessToken = async (req, res) => {
   try {
     const rawToken = req.cookies?.[REFRESH_COOKIE_NAME];
@@ -172,8 +178,6 @@ export const refreshAccessToken = async (req, res) => {
       return res.status(401).json({ message: "Session expired — please log in again" });
     }
 
-    // Re-checked on every refresh — matches the existing mid-session
-    // suspension enforcement used everywhere else in the app.
     if (!user.company.isActive) {
       return res.status(403).json({ message: "This account has been suspended. Contact support." });
     }
@@ -197,9 +201,6 @@ export const refreshAccessToken = async (req, res) => {
   }
 };
 
-// POST /api/auth/logout — revokes the real, server-side session record.
-// Clearing sessionStorage on the frontend alone was never a real logout;
-// the refresh token stayed valid until it naturally expired.
 export const logoutUser = async (req, res) => {
   try {
     const rawToken = req.cookies?.[REFRESH_COOKIE_NAME];
