@@ -6,6 +6,8 @@ import { createNotification } from "../modules/notifications/notification.servic
 import bcrypt from "bcryptjs";
 import { generateUniqueBusinessCode } from "../utils/generateBusinessCode.js";
 import { generateTempPassword } from "../utils/generateTempPassword.js";
+import { generateUniqueStoreCode } from "../utils/generateStoreCode.js";
+import { generateUniqueStaffId } from "../utils/generateStaffId.js";
 
 export const getPendingPayments = async (req, res) => {
   try {
@@ -640,12 +642,15 @@ export const createCompanyOnboarding = async (req, res) => {
         },
       });
 
+      const storeCode = await generateUniqueStoreCode(tx, storeName);
+
       const store = await tx.store.create({
         data: {
           companyId: company.id,
           name: storeName,
           location: storeLocation,
           isHeadOffice: true,
+          storeCode,
         },
       });
 
@@ -660,6 +665,11 @@ export const createCompanyOnboarding = async (req, res) => {
           role: "GENERAL_MANAGER",
           mustChangePassword: true,
         },
+      });
+
+      const gmStaffId = await generateUniqueStaffId(tx);
+      await tx.employeeProfile.create({
+        data: { userId: gm.id, staffId: gmStaffId },
       });
 
       const subscription = await tx.subscription.create({
@@ -693,7 +703,7 @@ export const createCompanyOnboarding = async (req, res) => {
         },
       });
 
-      return { company, store, gm, subscription, payment };
+      return { company, store, gm, subscription, payment, storeCode, gmStaffId };
     });
 
     await createPlatformAuditLog({
@@ -717,6 +727,8 @@ export const createCompanyOnboarding = async (req, res) => {
       gmName,
       gmEmail,
       tempPassword,
+      storeCode: result.storeCode,
+      staffId: result.gmStaffId,
       companyId: result.company.id,
       chargeAmount,
       coverageEndDate: endDate,
@@ -731,6 +743,7 @@ export const createCompanyOnboarding = async (req, res) => {
     res.status(500).json({ message: "Failed to onboard company" });
   }
 };
+
 // POST /api/platform/companies/:id/bundles
 // The "MBS calls back wanting Payroll" flow — deterministic pricing,
 // same rep-collected-payment pattern as onboarding.

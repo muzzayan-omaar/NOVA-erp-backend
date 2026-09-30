@@ -1,5 +1,6 @@
 import prisma from "../lib/prisma.js";
 import { assertStoreCapacity } from "../utils/checkCapacityLimits.js";
+import { generateUniqueStoreCode } from "../utils/generateStoreCode.js";
 
 /**
  * CREATE STORE (branch)
@@ -15,6 +16,8 @@ export const createStore = async (req, res) => {
 
     const { name, location, phone, isHeadOffice } = req.body;
 
+    const storeCode = await generateUniqueStoreCode(prisma, name);
+
     const store = await prisma.store.create({
       data: {
         name,
@@ -23,6 +26,7 @@ export const createStore = async (req, res) => {
         isHeadOffice: isHeadOffice || false,
         isActive: true,
         companyId,
+        storeCode,
       },
     });
 
