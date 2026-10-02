@@ -8,6 +8,7 @@ import {
   closeShift,
   getShifts,
   getShiftDetail,
+  getShiftPreview,
 } from "../controllers/shiftController.js";
 
 const router = express.Router();
@@ -16,6 +17,7 @@ router.use(protect);
 
 router.post("/open", checkPermission("sales"), checkFeatureAccess("sales"), openShift);
 router.get("/current", getCurrentShift);
+router.get("/:id/preview", getShiftPreview);
 router.post("/:id/close", checkPermission("sales"), checkFeatureAccess("sales"), closeShift);
 
 // GM-only oversight list — ownership for individual shift detail is

@@ -2,6 +2,60 @@ import prisma from "../lib/prisma.js";
 import createAuditLog from "../services/auditService.js";
 import { createNotification } from "../modules/notifications/notification.service.js";
 
+// Shared calculation used by both preview and close — keeps them in lockstep.
+const computeShiftReports = async (shiftId) => {
+  const sales = await prisma.sale.findMany({
+    where: { shiftId, status: "COMPLETED" },
+    include: {
+      payments: true,
+      saleItems: { include: { product: { select: { name: true } } } },
+    },
+  });
+
+  const totalSales = sales.reduce((sum, s) => sum + s.totalAmount, 0);
+
+  const totalByMethod = {};
+  let cashFromSales = 0;
+
+  sales.forEach((sale) => {
+    const lines =
+      sale.payments.length > 0
+        ? sale.payments
+        : [{ method: sale.paymentMethod, amount: sale.totalAmount }];
+
+    lines.forEach((p) => {
+      totalByMethod[p.method] = (totalByMethod[p.method] || 0) + p.amount;
+      if (p.method === "CASH") cashFromSales += p.amount;
+    });
+  });
+
+  const productMap = {};
+  sales.forEach((sale) => {
+    sale.saleItems.forEach((item) => {
+      const baseUnits = item.quantity * (item.unitConversionFactor || 1);
+      if (!productMap[item.productId]) {
+        productMap[item.productId] = {
+          productId: item.productId,
+          name: item.product.name,
+          qty: 0,
+          revenue: 0,
+        };
+      }
+      productMap[item.productId].qty += baseUnits;
+      productMap[item.productId].revenue += item.subtotal;
+    });
+  });
+  const productMix = Object.values(productMap).sort((a, b) => b.revenue - a.revenue);
+
+  return {
+    totalSales,
+    totalByMethod,
+    cashFromSales,
+    productMix,
+    transactionCount: sales.length,
+  };
+};
+
 // POST /api/shifts/open
 export const openShift = async (req, res) => {
   try {
@@ -24,7 +78,9 @@ export const openShift = async (req, res) => {
     });
 
     await createAuditLog({
-      userId, companyId, storeId,
+      userId,
+      companyId,
+      storeId,
       action: "SHIFT_OPENED",
       entityType: "cashier_shift",
       entityId: shift.id,
@@ -51,6 +107,29 @@ export const getCurrentShift = async (req, res) => {
   }
 };
 
+// GET /api/shifts/:id/preview — read-only, no writes.
+// Used by the "End Shift" screen before the cashier commits.
+export const getShiftPreview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { userId } = req.context;
+
+    const shift = await prisma.cashierShift.findFirst({ where: { id, userId } });
+    if (!shift) return res.status(404).json({ message: "Shift not found" });
+    if (shift.status !== "OPEN") {
+      return res.status(400).json({ message: "This shift is already closed" });
+    }
+
+    const reports = await computeShiftReports(id);
+    const expectedCash = shift.openingFloat + reports.cashFromSales;
+
+    res.json({ shift, expectedCash, ...reports });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // POST /api/shifts/:id/close
 // Computes and locks in the three reports from real Sale/SalePayment data
 // scoped to exactly this shift — never a time-window guess.
@@ -70,43 +149,8 @@ export const closeShift = async (req, res) => {
       return res.status(400).json({ message: "This shift is already closed" });
     }
 
-    const sales = await prisma.sale.findMany({
-      where: { shiftId: id, status: "COMPLETED" },
-      include: {
-        payments: true,
-        saleItems: { include: { product: { select: { name: true } } } },
-      },
-    });
-
-    const totalSales = sales.reduce((sum, s) => sum + s.totalAmount, 0);
-
-    const totalByMethod = {};
-    let cashFromSales = 0;
-
-    sales.forEach((sale) => {
-      const lines = sale.payments.length > 0
-        ? sale.payments
-        : [{ method: sale.paymentMethod, amount: sale.totalAmount }];
-
-      lines.forEach((p) => {
-        totalByMethod[p.method] = (totalByMethod[p.method] || 0) + p.amount;
-        if (p.method === "CASH") cashFromSales += p.amount;
-      });
-    });
-
-    const productMap = {};
-    sales.forEach((sale) => {
-      sale.saleItems.forEach((item) => {
-        const baseUnits = item.quantity * (item.unitConversionFactor || 1);
-        if (!productMap[item.productId]) {
-          productMap[item.productId] = { productId: item.productId, name: item.product.name, qty: 0, revenue: 0 };
-        }
-        productMap[item.productId].qty += baseUnits;
-        productMap[item.productId].revenue += item.subtotal;
-      });
-    });
-    const productMix = Object.values(productMap).sort((a, b) => b.revenue - a.revenue);
-
+    const { totalSales, totalByMethod, cashFromSales, productMix, transactionCount } =
+      await computeShiftReports(id);
     const expectedCash = shift.openingFloat + cashFromSales;
     const cashVariance = Number(countedCash) - expectedCash;
 
@@ -121,16 +165,24 @@ export const closeShift = async (req, res) => {
         totalSales,
         totalByMethod,
         productMix,
-        transactionCount: sales.length,
+        transactionCount,
       },
     });
 
     await createAuditLog({
-      userId, companyId, storeId,
+      userId,
+      companyId,
+      storeId,
       action: "SHIFT_CLOSED",
       entityType: "cashier_shift",
       entityId: id,
-      metadata: { totalSales, expectedCash, countedCash: Number(countedCash), cashVariance, transactionCount: sales.length },
+      metadata: {
+        totalSales,
+        expectedCash,
+        countedCash: Number(countedCash),
+        cashVariance,
+        transactionCount,
+      },
     });
 
     if (Math.abs(cashVariance) > 1) {
@@ -139,14 +191,21 @@ export const closeShift = async (req, res) => {
         select: { id: true },
       });
 
-      const cashier = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+      const cashier = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { name: true },
+      });
 
       await Promise.all(
         gms.map((gm) =>
           createNotification({
-            companyId, storeId, userId: gm.id,
+            companyId,
+            storeId,
+            userId: gm.id,
             title: cashVariance < 0 ? "Till Shortage Detected" : "Till Overage Detected",
-            message: `${cashier.name}'s shift closed with a ${cashVariance < 0 ? "shortage" : "overage"} of UGX ${Math.abs(cashVariance).toLocaleString()}.`,
+            message: `${cashier.name}'s shift closed with a ${
+              cashVariance < 0 ? "shortage" : "overage"
+            } of UGX ${Math.abs(cashVariance).toLocaleString()}.`,
             type: "INVENTORY",
             priority: cashVariance < 0 ? "HIGH" : "MEDIUM",
             uniqueKey: `SHIFT_VARIANCE_${id}`,
@@ -197,7 +256,10 @@ export const getShiftDetail = async (req, res) => {
 
     const shift = await prisma.cashierShift.findFirst({
       where: { id, companyId },
-      include: { user: { select: { id: true, name: true } }, store: { select: { id: true, name: true } } },
+      include: {
+        user: { select: { id: true, name: true } },
+        store: { select: { id: true, name: true } },
+      },
     });
 
     if (!shift) return res.status(404).json({ message: "Shift not found" });
