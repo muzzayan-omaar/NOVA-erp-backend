@@ -937,8 +937,17 @@ model EmployeeProfile {
   defaultBasicSalary    Float?
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
-
+  workStatus            WorkStatus @default(ACTIVE)
+  workStatusUpdatedAt   DateTime?
+  leaveUntil          DateTime?
   user User @relation(fields: [userId], references: [id])
 
   @@map("employee_profile")
+}
+
+enum WorkStatus {
+  ACTIVE
+  OFF
+  HOLIDAY
+  EMERGENCY_LEAVE
 }

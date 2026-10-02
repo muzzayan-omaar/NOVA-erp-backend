@@ -9,17 +9,16 @@ import {
   getCurrentStore,
   toggleStoreStatus,
   getStoreOptions,
+  getStoreDetail,
+  updateStore,
 } from "../controllers/storeController.js";
 import checkPermission from "../middleware/checkPermission.js";
 import checkFeatureAccess from "../middleware/checkFeatureAccess.js";
 
 const router = express.Router();
 
-router.post("/", protect, checkPermission("stores"), checkFeatureAccess("stores"), createStore);
-
-router.get("/", protect, checkPermission("stores"), checkFeatureAccess("stores"), getStores);
-
-router.post("/switch", protect, switchStore);
+// ---- Static / fixed paths FIRST ----
+router.get("/options", protect, getStoreOptions);
 
 router.get(
   "/current",
@@ -29,6 +28,42 @@ router.get(
   getCurrentStore
 );
 
+router.post("/switch", protect, switchStore);
+
+// ---- Collection ----
+router.get(
+  "/",
+  protect,
+  checkPermission("stores"),
+  checkFeatureAccess("stores"),
+  getStores
+);
+
+router.post(
+  "/",
+  protect,
+  checkPermission("stores"),
+  checkFeatureAccess("stores"),
+  createStore
+);
+
+// ---- Param routes (after static ones) ----
+router.get(
+  "/:id",
+  protect,
+  checkPermission("stores"),
+  checkFeatureAccess("stores"),
+  getStoreDetail
+);
+
+router.patch(
+  "/:id",
+  protect,
+  checkPermission("stores"),
+  checkFeatureAccess("stores"),
+  updateStore
+);
+
 router.patch(
   "/:id/status",
   protect,
@@ -36,5 +71,5 @@ router.patch(
   checkFeatureAccess("stores"),
   toggleStoreStatus
 );
-router.get("/options", protect, getStoreOptions);
+
 export default router;

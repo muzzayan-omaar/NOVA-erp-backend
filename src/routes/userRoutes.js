@@ -1,5 +1,5 @@
 import express from "express";
-import { getUsers, createUser, updateUser, deleteUser, getUserDetail  } from "../controllers/userController.js";
+import { getUsers, createUser, updateUser, deleteUser, getUserDetail, getUserActivity  } from "../controllers/userController.js";
 
 import protect from "../middleware/protect.js";
 import authorize from "../middleware/authorize.js";
@@ -10,7 +10,11 @@ const router = express.Router();
 
 router.get("/", protect, checkPermission("users"), checkFeatureAccess("users"), getUsers);
 
+router.get("/:id/activity", protect, checkPermission("users"), getUserActivity);
+
 router.get("/:id", protect, checkPermission("users"), getUserDetail);
+
+
 
 router.post("/", protect, checkPermission("users"), checkFeatureAccess("users"), createUser);
 

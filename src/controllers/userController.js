@@ -5,10 +5,48 @@ import { generateUniqueStaffId } from "../utils/generateStaffId.js";
 import { generateTempPassword } from "../utils/generateTempPassword.js";
 import createAuditLog from "../services/auditService.js";
 
+const PRESENCE_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+
+/** Compute live presence from the newest non-revoked refresh token */
+function computePresence(token, now = new Date()) {
+  if (!token) return "offline";
+  const created = new Date(token.createdAt);
+  const expires = new Date(token.expiresAt);
+  if (expires <= now) return "offline";
+  if (now - created >= PRESENCE_WINDOW_MS) return "offline";
+  return "online";
+}
+
+/**
+ * Resolve the status that the UI should display.
+ * Priority: account disabled → valid leave → live presence
+ */
+function resolveDisplayStatus(user, presence, now = new Date()) {
+  if (user.isActive === false) return "INACTIVE";
+
+  const profile = user.employeeProfile;
+  const ws = profile?.workStatus;
+  const leaveUntil = profile?.leaveUntil ? new Date(profile.leaveUntil) : null;
+
+  // Emergency leave / holiday still valid?
+  if (
+    (ws === "EMERGENCY_LEAVE" || ws === "HOLIDAY") &&
+    leaveUntil &&
+    leaveUntil > now
+  ) {
+    return ws;
+  }
+
+  // Leave expired or no special status → fall back to live presence
+  return presence === "online" ? "ACTIVE" : "OFF";
+}
+
 export const getUsers = async (req, res) => {
   try {
+    const companyId = req.context.companyId;
+
     const users = await prisma.user.findMany({
-      where: { companyId: req.context.companyId },
+      where: { companyId },
       select: {
         id: true,
         name: true,
@@ -17,8 +55,9 @@ export const getUsers = async (req, res) => {
         storeId: true,
         activeStoreId: true,
         isActive: true,
-        store: { select: { id: true, name: true } },
         createdAt: true,
+        updatedAt: true,
+        store: { select: { id: true, name: true } },
         employeeProfile: {
           select: {
             staffId: true,
@@ -26,12 +65,57 @@ export const getUsers = async (req, res) => {
             shift: true,
             photoUrl: true,
             hireDate: true,
+            workStatus: true,
+            workStatusUpdatedAt: true,
+            leaveUntil: true,
           },
         },
       },
     });
 
-    res.json(users);
+    if (users.length === 0) {
+      return res.json([]);
+    }
+
+    const userIds = users.map((u) => u.id);
+
+    // Latest non-revoked token per user (efficient single query + reduce)
+    const tokens = await prisma.refreshToken.findMany({
+      where: {
+        userId: { in: userIds },
+        revokedAt: null,
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        userId: true,
+        createdAt: true,
+        expiresAt: true,
+      },
+    });
+
+    const latestTokenByUser = new Map();
+    for (const t of tokens) {
+      if (!latestTokenByUser.has(t.userId)) {
+        latestTokenByUser.set(t.userId, t);
+      }
+    }
+
+    const now = new Date();
+
+    const result = users.map((u) => {
+      const token = latestTokenByUser.get(u.id) || null;
+      const presence = computePresence(token, now);
+      const displayStatus = resolveDisplayStatus(u, presence, now);
+
+      return {
+        ...u,
+        presence,           // "online" | "offline"
+        displayStatus,      // ACTIVE | OFF | HOLIDAY | EMERGENCY_LEAVE | INACTIVE
+        lastSeenAt: token?.createdAt || null,
+      };
+    });
+
+    res.json(result);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to fetch users" });
@@ -53,13 +137,31 @@ export const getUserDetail = async (req, res) => {
         storeId: true,
         isActive: true,
         createdAt: true,
+        updatedAt: true,
         store: { select: { id: true, name: true, storeCode: true } },
         employeeProfile: true,
       },
     });
 
     if (!user) return res.status(404).json({ message: "User not found" });
-    res.json(user);
+
+    // Attach live presence so the detail page stays consistent
+    const lastToken = await prisma.refreshToken.findFirst({
+      where: { userId: id, revokedAt: null },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true, expiresAt: true },
+    });
+
+    const now = new Date();
+    const presence = computePresence(lastToken, now);
+    const displayStatus = resolveDisplayStatus(user, presence, now);
+
+    res.json({
+      ...user,
+      presence,
+      displayStatus,
+      lastSeenAt: lastToken?.createdAt || null,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: err.message });
@@ -144,6 +246,9 @@ export const createUser = async (req, res) => {
           emergencyContactPhone,
           hireDate: hireDate ? new Date(hireDate) : null,
           defaultBasicSalary: defaultBasicSalary ? Number(defaultBasicSalary) : null,
+          workStatus: "ACTIVE",
+          workStatusUpdatedAt: new Date(),
+          leaveUntil: null,
         },
       });
 
@@ -196,6 +301,8 @@ export const updateUser = async (req, res) => {
       emergencyContactPhone,
       hireDate,
       defaultBasicSalary,
+      workStatus,
+      leaveDays, // number of days for emergency leave / holiday
     } = req.body;
 
     const existing = await prisma.user.findFirst({ where: { id, companyId } });
@@ -213,16 +320,43 @@ export const updateUser = async (req, res) => {
       });
 
       const hasProfileFields = [
-        dateOfBirth, gender, nationalIdType, nationalIdNumber, educationLevel,
-        position, shift, photoUrl, emergencyContactName, emergencyContactPhone,
-        hireDate, defaultBasicSalary,
+        dateOfBirth,
+        gender,
+        nationalIdType,
+        nationalIdNumber,
+        educationLevel,
+        position,
+        shift,
+        photoUrl,
+        emergencyContactName,
+        emergencyContactPhone,
+        hireDate,
+        defaultBasicSalary,
+        workStatus,
+        leaveDays,
       ].some((v) => v !== undefined);
 
       if (hasProfileFields) {
+        let leaveUntil = undefined;
+
+        if (workStatus === "EMERGENCY_LEAVE" || workStatus === "HOLIDAY") {
+          const days = Number(leaveDays);
+          if (!Number.isFinite(days) || days < 1) {
+            throw new Error("Please specify a valid number of leave days (minimum 1)");
+          }
+          leaveUntil = new Date();
+          leaveUntil.setDate(leaveUntil.getDate() + Math.floor(days));
+        } else if (workStatus !== undefined) {
+          // Clearing leave or switching to ACTIVE/OFF
+          leaveUntil = null;
+        }
+
         await tx.employeeProfile.upsert({
           where: { userId: id },
           update: {
-            ...(dateOfBirth !== undefined && { dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null }),
+            ...(dateOfBirth !== undefined && {
+              dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+            }),
             ...(gender !== undefined && { gender }),
             ...(nationalIdType !== undefined && { nationalIdType }),
             ...(nationalIdNumber !== undefined && { nationalIdNumber }),
@@ -232,17 +366,36 @@ export const updateUser = async (req, res) => {
             ...(photoUrl !== undefined && { photoUrl }),
             ...(emergencyContactName !== undefined && { emergencyContactName }),
             ...(emergencyContactPhone !== undefined && { emergencyContactPhone }),
-            ...(hireDate !== undefined && { hireDate: hireDate ? new Date(hireDate) : null }),
-            ...(defaultBasicSalary !== undefined && { defaultBasicSalary: defaultBasicSalary ? Number(defaultBasicSalary) : null }),
+            ...(hireDate !== undefined && {
+              hireDate: hireDate ? new Date(hireDate) : null,
+            }),
+            ...(defaultBasicSalary !== undefined && {
+              defaultBasicSalary: defaultBasicSalary ? Number(defaultBasicSalary) : null,
+            }),
+            ...(workStatus !== undefined && {
+              workStatus,
+              workStatusUpdatedAt: new Date(),
+            }),
+            ...(leaveUntil !== undefined && { leaveUntil }),
           },
           create: {
             userId: id,
             staffId: await generateUniqueStaffId(tx),
             dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
-            gender, nationalIdType, nationalIdNumber, educationLevel,
-            position, shift, photoUrl, emergencyContactName, emergencyContactPhone,
+            gender,
+            nationalIdType,
+            nationalIdNumber,
+            educationLevel,
+            position,
+            shift,
+            photoUrl,
+            emergencyContactName,
+            emergencyContactPhone,
             hireDate: hireDate ? new Date(hireDate) : null,
             defaultBasicSalary: defaultBasicSalary ? Number(defaultBasicSalary) : null,
+            workStatus: workStatus || "ACTIVE",
+            workStatusUpdatedAt: new Date(),
+            leaveUntil: leaveUntil ?? null,
           },
         });
       }
@@ -253,7 +406,10 @@ export const updateUser = async (req, res) => {
     res.json(updated);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: err.message });
+    const message = err.message?.includes("leave days")
+      ? err.message
+      : err.message || "Failed to update user";
+    res.status(400).json({ message });
   }
 };
 
@@ -269,5 +425,99 @@ export const deleteUser = async (req, res) => {
     res.json({ message: "User deleted" });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+};
+
+export const getUserActivity = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { companyId } = req.context;
+
+    const user = await prisma.user.findFirst({
+      where: { id, companyId },
+      select: {
+        id: true,
+        isActive: true,
+        employeeProfile: {
+          select: {
+            workStatus: true,
+            leaveUntil: true,
+            workStatusUpdatedAt: true,
+          },
+        },
+      },
+    });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const now = new Date();
+    const d7 = new Date(now);
+    d7.setDate(d7.getDate() - 7);
+    const d30 = new Date(now);
+    d30.setDate(d30.getDate() - 30);
+
+    const [sales7d, sales30d, failedLogins7d, lastToken, recentAudit] =
+      await Promise.all([
+        prisma.sale.count({
+          where: {
+            userId: id,
+            companyId,
+            status: "COMPLETED",
+            createdAt: { gte: d7 },
+          },
+        }),
+        prisma.sale.count({
+          where: {
+            userId: id,
+            companyId,
+            status: "COMPLETED",
+            createdAt: { gte: d30 },
+          },
+        }),
+        prisma.notification.count({
+          where: {
+            companyId,
+            type: "FAILED_LOGIN",
+            createdAt: { gte: d7 },
+            OR: [
+              { userId: id },
+              { uniqueKey: { startsWith: `FAILED_LOGIN_${id}_` } },
+            ],
+          },
+        }),
+        prisma.refreshToken.findFirst({
+          where: { userId: id, revokedAt: null },
+          orderBy: { createdAt: "desc" },
+          select: { createdAt: true, expiresAt: true },
+        }),
+        prisma.auditLog.findMany({
+          where: { companyId, userId: id },
+          orderBy: { createdAt: "desc" },
+          take: 15,
+          select: {
+            id: true,
+            action: true,
+            entityType: true,
+            createdAt: true,
+            store: { select: { name: true } },
+          },
+        }),
+      ]);
+
+    const presence = computePresence(lastToken, now);
+    const displayStatus = resolveDisplayStatus(user, presence, now);
+    const lastSeenAt = lastToken?.createdAt || null;
+
+    res.json({
+      presence,
+      displayStatus,
+      lastSeenAt,
+      sales7d,
+      sales30d,
+      failedLogins7d,
+      recentAudit,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to load activity" });
   }
 };
