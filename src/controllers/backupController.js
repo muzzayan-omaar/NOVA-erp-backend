@@ -14,7 +14,7 @@ export const triggerBackupNow = async (req, res) => {
 
     const result = await sendEmail({
       to: requester.email,
-      subject: `Nova ERP — ${snapshot.companyName} Backup (requested)`,
+      subject: `Novrr ERP — ${snapshot.companyName} Backup (requested)`,
       html: `
         <p>Hello ${requester.name},</p>
         <p>Here is your requested business snapshot, attached as an Excel file.</p>

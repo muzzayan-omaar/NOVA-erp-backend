@@ -30,7 +30,7 @@ export const generateRefreshToken = () => {
 export const hashRefreshToken = (raw) =>
   crypto.createHash("sha256").update(raw).digest("hex");
 
-export const REFRESH_COOKIE_NAME = "nova_refresh";
+export const REFRESH_COOKIE_NAME = "novrr_refresh";
 export const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",

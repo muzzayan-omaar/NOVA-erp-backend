@@ -39,7 +39,7 @@ const checkFeatureAccess = (featureKey) => async (req, res, next) => {
 
     if (!allKeys.has(featureKey)) {
       return res.status(402).json({
-        message: `"${featureKey}" isn't included in your current plan. Contact Nova support to add it.`,
+        message: `"${featureKey}" isn't included in your current plan. Contact Novrr support to add it.`,
         reason: "FEATURE_NOT_INCLUDED",
         featureKey,
       });

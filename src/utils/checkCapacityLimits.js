@@ -12,7 +12,7 @@ export const assertStoreCapacity = async (companyId) => {
   if (currentCount >= maxStores) {
     return {
       ok: false,
-      message: `Your plan allows up to ${maxStores} store(s). Contact Nova support to upgrade.`,
+      message: `Your plan allows up to ${maxStores} store(s). Contact Novrr support to upgrade.`,
     };
   }
 
@@ -31,7 +31,7 @@ export const assertUserCapacity = async (companyId) => {
   if (currentCount >= maxUsers) {
     return {
       ok: false,
-      message: `Your plan allows up to ${maxUsers} user(s). Contact Nova support to upgrade.`,
+      message: `Your plan allows up to ${maxUsers} user(s). Contact Novrr support to upgrade.`,
     };
   }
 

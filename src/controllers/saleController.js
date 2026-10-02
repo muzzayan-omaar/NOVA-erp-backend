@@ -210,8 +210,8 @@ const vatRate = companyForVat?.vatRate ?? 0.18;
           customerId,
           clientReferenceId,
           clientCreatedAt: clientCreatedAt ? new Date(clientCreatedAt) : null,
-          fiscalReceiptId: `NOVA-EFRIS-${Date.now()}`,
-          qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVA-EFRIS-${Date.now()}`,
+          fiscalReceiptId: `NOVRR-EFRIS-${Date.now()}`,
+          qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVRR-EFRIS-${Date.now()}`,
         },
       });
 

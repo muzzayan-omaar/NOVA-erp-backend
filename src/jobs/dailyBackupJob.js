@@ -38,7 +38,7 @@ export const runDailyBackupJob = async () => {
         for (const gm of gms) {
           const result = await sendEmail({
             to: gm.email,
-            subject: `Nova ERP — ${company.name} Daily Backup (${new Date().toDateString()})`,
+            subject: `Novrr ERP — ${company.name} Daily Backup (${new Date().toDateString()})`,
             html: `
               <p>Hello ${gm.name},</p>
               <p>Here is today's business snapshot for ${company.name}, attached as an Excel file.</p>

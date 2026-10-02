@@ -42,7 +42,7 @@ io.on("connection", (socket) => {
 const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
-  console.log(`✅ Nova ERP Server running on http://localhost:${PORT}`);
+  console.log(`✅ Novrr ERP Server running on http://localhost:${PORT}`);
 });
 cron.schedule("0 20 * * *", () => {
   runDailyBackupJob();

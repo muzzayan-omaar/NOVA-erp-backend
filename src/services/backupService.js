@@ -34,7 +34,7 @@ export const generateDailySnapshot = async (companyId) => {
   const totalPayables = payables.reduce((sum, s) => sum + s.totalOwed, 0);
 
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = "Nova ERP";
+  workbook.creator = "Novrr ERP";
   workbook.created = new Date();
 
   const summarySheet = workbook.addWorksheet("Summary");
@@ -103,7 +103,7 @@ export const generateDailySnapshot = async (companyId) => {
 
   return {
     buffer,
-    filename: `Nova_Backup_${company.name.replace(/\s+/g, "_")}_${startOfDay.toISOString().slice(0, 10)}.xlsx`,
+    filename: `Novrr_Backup_${company.name.replace(/\s+/g, "_")}_${startOfDay.toISOString().slice(0, 10)}.xlsx`,
     summary: { totalRevenue, totalExpenses, transactionCount: sales.length, lowStockCount: lowStockProducts.length },
     companyName: company.name,
   };
