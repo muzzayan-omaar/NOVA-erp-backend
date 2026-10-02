@@ -27,17 +27,26 @@ export const createSale = async (req, res) => {
       return res.status(400).json({ message: "Cart cannot be empty" });
     }
 
+    // ── Insertion 1 ────────────────────────────────────────────────
+    const openShift = await prisma.cashierShift.findFirst({
+      where: { userId: req.context.userId, status: "OPEN" },
+    });
+    if (req.context.role === "CASHIER" && !openShift) {
+      return res.status(400).json({
+        message: "You must open your till before making sales. Go to Start Shift first.",
+      });
+    }
+    // ───────────────────────────────────────────────────────────────
+
     // Validate a split-payment payload if one was given
     let splitEntries = null;
     if (payments && Array.isArray(payments) && payments.length > 0) {
       splitEntries = payments
         .map((p) => ({ method: p.method, amount: Number(p.amount), reference: p.reference || null }))
         .filter((p) => p.amount > 0);
-
       if (splitEntries.length === 0) {
         return res.status(400).json({ message: "At least one payment line is required" });
       }
-
       const hasCreditLine = splitEntries.some((p) => p.method === "CREDIT");
       if (hasCreditLine && !customerId) {
         return res.status(400).json({ message: "A customer must be selected for the credit portion of this sale" });
@@ -56,9 +65,7 @@ export const createSale = async (req, res) => {
       }
     }
 
-    // Idempotency check — if this exact client-generated sale was already
-    // created (e.g. an offline queue retrying after the original request's
-    // response got lost), return the existing sale instead of duplicating it.
+    // Idempotency check
     if (clientReferenceId) {
       const existing = await prisma.sale.findFirst({
         where: { companyId: req.context.companyId, clientReferenceId },
@@ -75,12 +82,9 @@ export const createSale = async (req, res) => {
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
 
-    // ---------- Resolve each cart line: base unit, a ProductUnit, or a
-    // specific serial. This is where unit conversion factors get computed
-    // and stock availability is checked in real base-unit terms. ----------
+    // Resolve each cart line
     let subtotal = 0;
     const resolvedItems = [];
-
     for (const item of items) {
       const product = productMap.get(item.productId);
       if (!product) {
@@ -96,7 +100,6 @@ export const createSale = async (req, res) => {
         if (Number(item.quantity) !== 1) {
           return res.status(400).json({ message: `${product.name} is serialized — it must be sold one at a time` });
         }
-
         serial = await prisma.productSerial.findFirst({
           where: {
             id: item.productSerialId,
@@ -105,7 +108,6 @@ export const createSale = async (req, res) => {
             productId: item.productId,
           },
         });
-
         if (!serial) {
           return res.status(404).json({ message: `Serial not found for ${product.name}` });
         }
@@ -114,7 +116,6 @@ export const createSale = async (req, res) => {
             message: `Serial ${serial.serialNumber} is not available (status: ${serial.status})`,
           });
         }
-
         unitConversionFactor = 1;
         unitPrice = product.sellingPrice;
       } else if (item.productUnitId) {
@@ -126,11 +127,9 @@ export const createSale = async (req, res) => {
             isActive: true,
           },
         });
-
         if (!productUnit) {
           return res.status(404).json({ message: `Unit not found for ${product.name}` });
         }
-
         unitConversionFactor = productUnit.conversionFactor;
         unitPrice = productUnit.sellingPrice ?? product.sellingPrice * productUnit.conversionFactor;
         productUnitId = productUnit.id;
@@ -159,10 +158,11 @@ export const createSale = async (req, res) => {
     }
 
     const companyForVat = await prisma.company.findUnique({
-  where: { id: req.context.companyId },
-  select: { vatRate: true },
-});
-const vatRate = companyForVat?.vatRate ?? 0.18;
+      where: { id: req.context.companyId },
+      select: { vatRate: true },
+    });
+    const vatRate = companyForVat?.vatRate ?? 0.18;
+
     const vatAmount = Math.round(subtotal * vatRate * 100) / 100;
     const totalAmount = subtotal + vatAmount - Number(discount);
 
@@ -212,14 +212,12 @@ const vatRate = companyForVat?.vatRate ?? 0.18;
           clientCreatedAt: clientCreatedAt ? new Date(clientCreatedAt) : null,
           fiscalReceiptId: `NOVRR-EFRIS-${Date.now()}`,
           qrCodeData: `https://efris.ura.go.ug/verify?receiptId=NOVRR-EFRIS-${Date.now()}`,
+          // ── Insertion 2 ──────────────────────────────────────────
+          shiftId: openShift?.id || null,
+          // ─────────────────────────────────────────────────────────
         },
       });
 
-      // Created one at a time (not createMany) — a serialized line needs
-      // its own real SaleItem id back immediately so the matching
-      // ProductSerial can be linked precisely, not guessed by matching
-      // productId afterward (which breaks the moment two lines share a
-      // product, e.g. two different serials of the same drill model).
       for (const resolved of resolvedItems) {
         const saleItem = await tx.saleItem.create({
           data: {
