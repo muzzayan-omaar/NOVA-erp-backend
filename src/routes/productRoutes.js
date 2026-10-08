@@ -9,6 +9,7 @@ import {
   deleteProduct,
   getLowStock,
   resolveScan,
+  bulkImportProducts,
 } from "../controllers/productController.js";
 import {
   getProductUnits,
@@ -34,6 +35,7 @@ router.get("/low-stock", protect, checkPermission("products"), getLowStock);
 router.get("/resolve-scan", protect, resolveScan);
 router.put("/:id", protect, checkPermission("products"), checkFeatureAccess("products"), updateProduct);
 router.delete("/:id", protect, checkPermission("products"), deleteProduct);
+router.post("/bulk-import", protect, checkPermission("products"), checkFeatureAccess("products"), bulkImportProducts);
 
 // Product Unit routes
 router.get("/:productId/units", protect, getProductUnits); // open read for cashiers
