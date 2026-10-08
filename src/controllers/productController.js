@@ -302,3 +302,81 @@ export const resolveScan = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// POST /api/products/bulk-import
+// body: { rows: [{ name, sku?, barcode?, buyingPrice, sellingPrice, stockQuantity, unitType? }] }
+// Every row is processed independently — one bad row never blocks the rest.
+export const bulkImportProducts = async (req, res) => {
+  try {
+    const { rows } = req.body;
+    const { companyId, storeId, userId } = req.context;
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ message: "No rows provided" });
+    }
+    if (rows.length > 2000) {
+      return res.status(400).json({ message: "Max 2000 rows per import — split into smaller batches" });
+    }
+
+    const results = [];
+    let successCount = 0;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2; // +2 accounts for the header row in the original sheet
+
+      try {
+        if (!row.name || !row.name.trim()) {
+          results.push({ row: rowNum, status: "FAILED", reason: "Missing product name" });
+          continue;
+        }
+        if (row.sellingPrice === undefined || row.sellingPrice === "" || isNaN(Number(row.sellingPrice))) {
+          results.push({ row: rowNum, status: "FAILED", reason: "Missing or invalid selling price", name: row.name });
+          continue;
+        }
+
+        let sku = row.sku?.trim() || row.barcode?.trim();
+        if (!sku) {
+          sku = `IMP-${Date.now()}-${i}`;
+        }
+
+        const existingSku = await prisma.product.findFirst({ where: { companyId, sku } });
+        if (existingSku) {
+          results.push({ row: rowNum, status: "FAILED", reason: `SKU "${sku}" already exists`, name: row.name });
+          continue;
+        }
+
+        const product = await prisma.product.create({
+          data: {
+            companyId, storeId,
+            name: row.name.trim(),
+            sku,
+            barcode: row.barcode?.trim() || null,
+            buyingPrice: Number(row.buyingPrice) || 0,
+            sellingPrice: Number(row.sellingPrice),
+            stockQuantity: Number(row.stockQuantity) || 0,
+            unitType: row.unitType?.trim() || "pcs",
+          },
+        });
+
+        results.push({ row: rowNum, status: "SUCCESS", name: product.name, productId: product.id });
+        successCount++;
+      } catch (err) {
+        results.push({ row: rowNum, status: "FAILED", reason: "Unexpected error creating this row", name: row.name });
+      }
+    }
+
+    await createAuditLog({
+      userId, companyId, storeId,
+      action: "PRODUCTS_BULK_IMPORTED",
+      entityType: "product",
+      entityId: companyId,
+      metadata: { totalRows: rows.length, successCount, failedCount: rows.length - successCount },
+    });
+
+    res.json({ results, successCount, failedCount: rows.length - successCount, totalRows: rows.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to process import" });
+  }
+};
